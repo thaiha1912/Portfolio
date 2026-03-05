@@ -1,0 +1,139 @@
+/*
+Script:     hn_ikSpline
+Author:     Hannah Trieu
+ver_1_0     12.8.2022
+
+//requsiteFunctions: 
+	hn_creFkChainCtl
+	hn_creCtrl
+//inputs
+
+
+//-purpose
+	
+//-how To:
+
+//-what script does:
+	Create a basic setup for a spline rig 
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+/*
+
+*/
+
+
+proc string[] createIkSpline(string $jnt){
+	string $child[] = `listRelatives -ad -type "joint" $jnt `;
+	string $ikS[] = `ikHandle -sol ikSplineSolver -n ("ikS" + $jnt) -createCurve true -ns 1 -rootOnCurve true -sj $jnt -ee $child[0]`;
+	string $spineCrv = `rename $ikS[2] ( "crvSpine_" + $jnt)`;
+	setAttr ($ikS[0] + ".v") 0;
+
+	setAttr (  $ikS[0] + ".dTwistControlEnable") 1;
+	setAttr (  $ikS[0] + ".dWorldUpType") 4;
+	setAttr (  $ikS[0] + ".dForwardAxis") 2;
+	setAttr (  $ikS[0] + ".dWorldUpAxis") 3;
+	setAttr (  $ikS[0] + ".dWorldUpVectorZ") 1;
+	setAttr (  $ikS[0] + ".dWorldUpVectorEndZ") 1;
+	setAttr (  $ikS[0] + ".dWorldUpVectorY") 0;
+	setAttr (  $ikS[0] + ".dWorldUpVectorEndY") 0;
+
+	return { $ikS[0], $spineCrv};
+
+}
+
+
+// proc for duplicate and blendshape the base curve, create a loft surface, rename and return it for skinning later on
+proc string  loftCrv(string $baseCrv, string $nextBase, int $invert){
+	setAttr ($baseCrv + ".v") 0;
+	
+	string $crvName = `substitute "crv" $baseCrv "" `;
+	string $dupC[] = ` duplicate -n ("crvDummy" + $crvName) $baseCrv`;
+	string $bsNode[] = ` blendShape $nextBase $dupC[0]`;
+	if($invert){
+		blendShape -e -w 0 -0.1 $bsNode[0];
+	}else{
+		blendShape -e -w 0 0.1 $bsNode[0];
+	}	
+
+	string $endC[] = ` duplicate -n ("crvEnd" + $crvName) $dupC[0]`;
+	string $loftSurface[] =  `loft -n ("loft_" + $crvName) -ch 1 -u 1 -c 0 -ar 1 -d 3 -ss 1 -rn 0 -po 0 -rsn true $baseCrv $endC[0]`;
+	delete $dupC;
+	return $loftSurface[0];
+}
+
+global proc hn_ikSpline(string $jntChain[], string $jntCtlChain[], string $midChain[], string $midCtlChain[], string $baseCrv[], int $midOnly ){
+	// create Normal Ik Sline
+	string $FJnt[]  = {};
+	string $SJnt[]  = {};
+	string $TJnt[]  = {};
+	string $loftName[] = {};
+
+	$loftName[0] = `loftCrv $baseCrv[2] $baseCrv[1] 1 `;
+	$loftName[1] = `loftCrv $baseCrv[1] $baseCrv[2] 0 `;
+	$loftName[2] = `loftCrv $baseCrv[0] $baseCrv[1] 0 `;
+
+	for($each in $loftName){
+		setAttr ($each + ".v") 0;
+	}
+
+	
+	for($x = 0 ; $x < `size $jntCtlChain`; $x++){
+		string $skinJnt[] = `listRelatives -ad -type "joint" $jntCtlChain[$x]`;
+		$skinJnt[`size $skinJnt`] = $jntCtlChain[$x];
+		
+		$FJnt[`size $FJnt`] = $skinJnt[2];
+		$SJnt[`size $SJnt`] = $skinJnt[1];
+		$TJnt[`size $TJnt`] = $skinJnt[0];
+		print "\n--NEXT--\n";
+
+		if ( $midOnly == 0){
+			print $jntChain[$x] ;
+			string $ikS[] = `createIkSpline $jntChain[$x]`;
+			hn_creFkChainCtl $jntCtlChain[$x] "parent";
+			select -cl ; select $skinJnt $ikS[1];
+			SmoothBindSkin;
+
+			connectAttr -f  (`substitute "jnt" $skinJnt[2] "ctl" ` + ".worldMatrix[0]") ($ikS[0] + ".dWorldUpMatrix");
+			connectAttr -f  (`substitute "jnt" $skinJnt[1] "ctl" ` +  ".worldMatrix[0]") ($ikS[0] + ".dWorldUpMatrixEnd");
+		}
+
+	}
+	
+
+
+	for($y = 0 ; $y < `size $midChain`; $y++){
+		print $midChain[$y] ;
+		string $ikS[] = `createIkSpline $midChain[$y]`;
+		hn_creFkChainCtl $midCtlChain[$y] "parent";
+		string $skinJnt[] = `listRelatives -ad -type "joint" $midCtlChain[$y]`;
+		$skinJnt[`size $skinJnt`] = $midCtlChain[$y];
+		select -cl ; select $skinJnt $ikS[1];
+		SmoothBindSkin;
+
+		connectAttr -f  (`substitute "jnt" $skinJnt[2] "ctl" ` + ".worldMatrix[0]") ($ikS[0] + ".dWorldUpMatrix");
+		connectAttr -f  (`substitute "jnt" $skinJnt[1] "ctl" ` +  ".worldMatrix[0]") ($ikS[0] + ".dWorldUpMatrixEnd");
+
+		for ($z = 0; $z < `size $skinJnt` ; $z ++){
+			
+			string $num =  `match "[0-9]+" $skinJnt[$z]`;
+			string $Lname = `substitute "[0-9]+" $loftName[$z] $num `;
+			string $folName = ` hn_revit $skinJnt[$z] $Lname`;
+			string $offsetGrp = `substitute "jnt" $skinJnt[$z] "grpOffset" `;
+			parentConstraint -mo $folName $offsetGrp;
+		}
+
+	}
+
+
+
+	select -cl ; select $FJnt $loftName[2];SmoothBindSkin;
+	select -cl ; select $SJnt $loftName[0];SmoothBindSkin;
+	select -cl ; select $TJnt $loftName[1];SmoothBindSkin;
+
+
+}

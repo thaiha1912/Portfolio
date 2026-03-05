@@ -1,0 +1,172 @@
+/*
+Script:     hn_SplitJointChain
+Author:     Hannah Trieu
+ver_1_0     5.8.2022
+
+//requsiteFunctions: 
+	None
+//inputs
+
+
+//-purpose
+	
+//-how To:
+	hn_SplitJointChain (string $parent, string $child, int $numJnts);
+//-what script does:
+	create split joint function and remain the shape/crv of the joint chain
+
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+proc multiJnt_crvCreate(string $joint[], string $name){
+// create curve that follow the input joint chain
+	// string $name = `substitute "_[^_]*$"  $joint2 ""`;
+	// $name = `substitute "_[^_]*$"  $name ""`;
+	float $pos[];
+	for ($x in $joint){
+		float $positionJnt[] = `xform -q -ws -t $x`;
+		$pos[`size $pos`] = $positionJnt[0];
+		$pos[`size $pos`] = $positionJnt[1];
+		$pos[`size $pos`] = $positionJnt[2];
+	}
+	
+	string $pos_of_crv_point;
+	for ($i = 0 ; $i < `size $pos`; $i += 3){
+		$pos_of_crv_point += (" -p " + $pos[$i] + " " + $pos[$i + 1] + " " + $pos[$i + 2] + " ");
+	}
+	
+	string $crv_string_toEval = ("curve -n " + $name + "_linear_crv -d 1" + $pos_of_crv_point);
+	string $linearCrv = `eval  $crv_string_toEval`;
+	string $linearCrv_shape[] = `listRelatives -s $linearCrv`;
+	int $num_of_knot = `size $joint`;
+	string $rebuildCrv[] = `rebuildCurve -n ( $name + "_crv") -ch 1 -rpo 0 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $num_of_knot -d 3 -tol 0.01 $linearCrv`;
+	string $all_loc[];
+	for ($e = 0; $e < $num_of_knot ; $e++){
+		string $loc[] = `spaceLocator -n ($name + "_"+ $e +"_loc") -p 0 0 0`;
+		appendStringArray ($all_loc, {$loc[0]}, 1);
+		pointConstraint -weight 1 $joint[$e] $loc[0];
+		connectAttr -f ( $loc[0] + "Shape.worldPosition[0]") ( $linearCrv_shape[0] + ".controlPoints["+$e+"]");
+		setAttr ($loc[0] + ".visibility") 0;		
+	}
+	displaySmoothness -divisionsU 3 -divisionsV 3 -pointsWire 16 -pointsShaded 4 -polygonObject 3 $rebuildCrv[0];
+	string $groupOffset = `group -n ($name + "_offset_grp") -w $linearCrv $rebuildCrv[0] $all_loc`;
+
+	setAttr ( $rebuildCrv[0] +".inheritsTransform") 1;
+	setAttr ( $groupOffset +".inheritsTransform") 0;
+	string $final_grp = `group -n ($name + "_temp_grp") $groupOffset`;
+	setAttr ($linearCrv + ".visibility") 0;
+	print "DONE Split Joint";
+	// return $final_grp;
+}
+
+global proc hn_SplitJointChain (string $parent, int $numJnts) {
+// this func create split joint function and remain the shape/crv of the joint chain
+//-----------------
+	string $listC[] = `listRelatives -ad -type "joint" $parent `;
+	string $child = $listC[0];
+	string $result[];
+	string $lisr[] = `listRelatives -ad -type "joint" $parent`;
+	appendStringArray($result, {$parent}, 1);
+	string $remove[];
+	for($x in $lisr){
+		if(`match "head" $x` == "head"){
+			appendStringArray ($remove, {$x}, 1);
+		}
+	}
+
+	$lisr = stringArrayRemove($remove, $lisr);
+	for ($e = 1; $e <= `size $lisr`; $e ++){
+		appendStringArray($result, {$lisr[`size $lisr` - $e]}, 1);
+	}
+
+	multiJnt_crvCreate ($result , "segCrv");
+//-------------------
+	$numJnts++;
+	select -cl ;
+	catchQuiet(`parent $child $parent`);
+	string $adP[] = `listRelatives -c -typ "joint" $parent`;
+	for ($x in $adP){
+		if($x != $child){
+			delete $x;
+		}
+	}		
+	// Joint Positions
+	float $pPos[] = `joint -q -p $parent` ;
+	float $cPos[] = `joint -q -p $child` ;
+	
+	// Parent Orientation
+	string $ro = `joint -q -roo $parent` ;
+	string $sao = "yup" ;
+
+	// khong Unparent Child nua
+	// unlock attr child jnt
+
+	string $attrL[] = {"tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"};
+	string $attrVal[];
+	for ($each in $attrL){
+		string $val = `getAttr -l ($child + "." + $each)`;
+		appendStringArray ($attrVal, {$val}, 1);
+		setAttr -lock 0 ($child + "." + $each);
+	}
+
+	// parent -w $child ;
+
+	float $div_percent = 1.0/$numJnts;
+	// Deselect All
+	select -cl ;
+	
+	// Loop And Setup Joints
+	string $lastJntCreated;
+	string $newJnts[] ;
+	string $c_parent;
+	string $child_lead;
+	for($i = 1; $i < $numJnts; $i++) {
+		string $n = $i + 1;
+		string $name = `substitute "_jnt" $parent ( "_seg_"+ $n + "_jnt")`;
+		//	dup name
+		string $jnt[] = `duplicate -n $name -rr $parent`;
+		string $c_jnt[] = `listRelatives -ad -f $jnt[0]`;
+		for ($each in $attrL){
+			catchQuiet(`setAttr -lock 0 ($jnt[0] + "." + $each)`);
+		}		
+		catchQuiet(`setAttr ($jnt[0]+".drawLabel") 0`);
+		delete $c_jnt;
+		// contraint 
+		select "segCrv_crv";
+		closestPointOn(1,1);
+		string $d[] = `duplicate -rr -n "toDel" "segCrv_crv"`;
+		string $motionPath = `pathAnimation -fractionMode false -follow true -followAxis z -upAxis y -worldUpType "vector" -worldUpVector 0 1 0 -inverseUp false -inverseFront false -bank false  $d[0] "cpConstraintIn"`;
+		setAttr ($motionPath + ".uValue") ($i * $div_percent) ;
+		catchQuiet(`parentConstraint -w 1 "cpConstraintPos" $jnt[0]`);
+		delete "cpConstraintIn"  "cpConstraintPos" $d ;
+		// Create Joint
+		if($i == 1) {
+			$child_lead = $jnt[0];
+		}else{
+			parent $jnt[0] $c_parent ;
+		}
+		$c_parent =  $jnt[0];
+		catchQuiet(`makeIdentity -apply true -rotate true $jnt[0]`);
+		// Set Last Created For Reference (Updates Until Last Iteration)
+		$lastJntCreated = $jnt[0];
+	}
+	// Reparent End Joint
+	
+	catchQuiet(`joint -e  -oj yzx -secondaryAxisOrient yup -ch -zso $child_lead`);
+	catchQuiet(`parent $child $lastJntCreated`);
+	catchQuiet(`joint -e  -oj yzx -secondaryAxisOrient yup -ch -zso $child_lead`);
+	catchQuiet(`parent $child_lead $parent`);
+	
+	for ($o = 0; $o < `size $attrVal` ; $o++){
+		if ($attrVal[$o] == 1){
+			setAttr -lock true ($child + "." + $attrL[$o]);
+		}else{
+			setAttr -lock false ($child + "." + $attrL[$o]);
+		}
+	}
+	delete "segCrv_temp_grp";
+}

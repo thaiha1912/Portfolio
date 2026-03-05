@@ -1,0 +1,37 @@
+/*
+Script:     hn_renameJntChain
+Author:     Thai Ha Trieu (Hannah Trieu)
+Date:       7.8.2022
+Purpose:    Rename joint chains with custom prefixes
+
+//requsiteFunctions: 
+
+//inputs
+
+
+//-purpose
+	
+//-how To:
+
+//-what script does:
+	Rename duplicate joint chain
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+
+global proc string hn_renameJntChain(string $nameOfOriJnt, string $parentJntName,  string $jntChainType){
+	string $listChild[] = `listRelatives -ad -f $parentJntName `;
+	setAttr ($parentJntName + ".v") 0;
+	for($y in $listChild){
+		string $newName = `match  "[^|]*$" $y `;
+		$newName = `substitute "jnt" $newName ("jnt" + $jntChainType )`;
+		rename $y $newName;
+	}
+	string $parentNewName = `substitute "jnt" $nameOfOriJnt ("jnt" + $jntChainType )`;
+	rename $parentJntName $parentNewName;
+	return $parentNewName;
+}

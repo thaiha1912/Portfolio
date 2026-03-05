@@ -1,0 +1,29 @@
+/*
+Script:     hn_mechShoulder
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Automated shoulder rigging with mirroring support
+*/
+
+global proc mechShoulder(){
+	string $sel[] = `ls -sl`;
+	select -cl; select $sel[0];
+	string $rtJnt[] = `mirrorJoint -mirrorYZ -mirrorBehavior -searchReplace "Lf" "Rt"`;
+	execMechShoulder($sel[0]);
+	execMechShoulder($rtJnt[0]);
+}
+
+global proc execMechShoulder(string $inputJnt){
+	string $ctlChild[] = `listRelatives -c -type "joint" $inputJnt`;
+	string $ctlName[] = `hn_creCtrl $inputJnt 1 "parent" 1 "" "" "fk"`;
+
+	string $dup[] = `duplicate -n ("drn_" + $inputJnt) -rc $inputJnt`;
+	string $shoulderRoot = $dup[0];
+	string $shoulderEnd = $dup[1];
+	$dup = `duplicate -n ("gear_" + $dup[1]) $dup[1]`;
+	string $shoulderGear = $dup[0];
+	parent $shoulderEnd $shoulderGear;
+
+	pointConstraint -mo -skip x -weight 1 $ctlChild[0] $shoulderRoot;
+	connectAttr -f ($ctlName[0] + ".ty") ($shoulderEnd +".ty");
+
+}

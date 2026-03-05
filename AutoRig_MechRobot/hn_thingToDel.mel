@@ -1,0 +1,22 @@
+global proc thingToDel(){
+	string $side[] = {"Lf", "Rt"};
+	for($e in $side){
+		string $child[] = `listRelatives -c -type "transform" ("locBall" + $e) `;
+		parent $child ("ctlGimbalIkFoot" + $e);
+		setAttr ("ctlIkFoot" + $e + ".stiffness") 0;
+		addAttr -e -dv 0 ("ctlIkFoot" + $e + ".stiffness");
+		setAttr -lock true  ("ctlIkFoot" + $e + ".stiffness");
+		setAttr ("locOffsetIkKnee" + $e + ".v") 0; 
+		setAttr ("jntFkKnee" + $e + ".v") 0; 
+		setAttr ("jntFkFoot" + $e + ".v") 0; 
+		string $ikFootAttrs[] = {"kneeFollow", "footRoll", "side", "ballBend"};
+		for ($y in $ikFootAttrs){
+			catch (`deleteAttr -attribute $y ("ctlIkFoot" + $e )`);
+		}
+	}
+
+	string $name[] = {"KneeCover", "LegBall", "FootCover", "Holder", "Ball", "locSide", "locToe"};
+	for($x in $name){
+		delete ("*" + $x + "*");
+	}
+}

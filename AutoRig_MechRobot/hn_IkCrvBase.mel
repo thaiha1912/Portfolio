@@ -1,0 +1,146 @@
+/*
+Script:     hn_IkSpline
+Author:     Thai Ha Trieu (Hannah Trieu)
+Date:       5.8.2022
+
+//requsiteFunctions: 
+	hn_creFkChainCtl
+	hn_creCtrl
+//inputs
+
+
+//-purpose
+	
+//-how To:
+
+//-what script does:
+	Create a basic setup for a spine rig and neck - head rig
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+/*
+note from testing v14
+cac joint named Test sau se thay thanh grp proxy de chua cac direct controllers sau nay
+
+*/
+
+
+proc attachJnt2Crv(string $inputCrv){
+	string $getList[] = `ls -sl`;
+	int $numberJnts = `size $getList`;
+	string $shape[] = `listRelatives -s $inputCrv `;
+	string $nearNode = `createNode -n ("npc_" + $inputCrv ) "nearestPointOnCurve"`;
+	connectAttr -force ($shape[0] + ".worldSpace[0]") ($nearNode + ".inputCurve");
+	for($x in $getList){
+		connectAttr -force ($x + ".translate") ($nearNode + ".inPosition");
+		string $pOCI = `createNode -n ("pOCI" + $x) "pointOnCurveInfo"`;
+		connectAttr -force ($shape[0] + ".worldSpace[0]") ($pOCI + ".inputCurve");
+		setAttr ($pOCI + ".parameter") `getAttr ($nearNode + ".parameter") `;
+		connectAttr -f ($pOCI + ".position") ($x + ".t");
+	}	
+}
+
+global proc hn_IkCrvBase(string $spineChain, string $ctlChain, string $sHipJnt, string $sChestJnt , string $midJnt ){
+
+	string $child[] = `listRelatives -ad -typ "joint" $spineChain `;
+	$child[`size $child`] = $spineChain;
+
+	string $upObj = `group -n ("grpUpObj_" + $spineChain) -em`;
+	parentConstraint -n "Del" $spineChain $upObj;
+	delete "Del";
+	parent $upObj $spineChain;
+	setAttr ($upObj + ".tx") 30;
+	parent -w $upObj;
+	pointConstraint -n "Del" -offset 0 0 0 -skip x -skip z -weight 1 $sHipJnt $upObj;
+	delete "Del";
+
+ 
+
+	string $evalList[] = {};
+	string $directOffsetGrp[] = {};
+	string $directOffset2Grp[] = {};
+
+
+	for($x in $child){
+		string $name = `substitute "..." $x ""`;
+		string $os1Grp = `group -n ("grpOs01" + $name) -em `;
+		string $os2Grp = `group -n ("grpOs02" + $name) -em `;
+		parent $os2Grp $os1Grp;
+		string $spineJnt = `joint -n ("jntS" + $name) -p 0 0 0 `;		
+
+		string $directCtl[] = ` hn_creCtrl $x 1 "parent" 0 "Direct" "" "direct"`;
+		
+		string $p1 = "pos = cmds.xform( \"" +  $directCtl[2] + " \"  , q = True, ws = True , m = True)\n" ;
+		string $p2 = "cmds.xform(\"" + $os1Grp + "\", ws = True, m = pos)\n ";		
+		python ( $p1); 
+		python ( $p2);
+
+		parent $directCtl[2] $os2Grp ;
+		parent $spineJnt $directCtl[0];
+
+		string $parentJnt[] = `listRelatives -p -typ "joint" $x `;
+		if(`size $parentJnt`){
+			string $parentOsGrpName = `substitute "jnt" $parentJnt[0] "grpOs02" `;
+			$evalList[`size $evalList`] = " aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 1 0 -upVector 1 0 0 -worldUpType \"object\" -worldUpObject "+ $upObj + " " + $directCtl[2] + " " + $parentOsGrpName  +  "; "  ;
+		}
+
+		$directOffsetGrp[`size $directOffsetGrp`] = $os1Grp;
+		$directOffset2Grp[`size $directOffset2Grp`] = $directCtl[2];
+		
+	}
+
+	string $ikS[] = `ikHandle -sol ikSplineSolver -n ("ikS" + $spineChain) -createCurve true -ns 2 -rootOnCurve true -sj $spineChain -ee $child[0]`;
+	string $spineCrv = `rename $ikS[2] ( "crvSpine_" + $spineChain)`;
+
+
+	delete $ikS[0];
+	hn_creFkChainCtl $ctlChain "parent";
+
+	select -cl; select $directOffsetGrp;
+	attachJnt2Crv $spineCrv;
+
+
+	for($y in $evalList){
+		eval $y;
+	}
+
+	string $skinCrvJnt[] = `listRelatives -ad -type "joint" $ctlChain `;
+	$skinCrvJnt[`size $skinCrvJnt`] = $ctlChain;
+
+	select -cl; select $skinCrvJnt  $spineCrv;
+	SmoothBindSkin;
+
+	
+	string $endExtrac[] = `hn_creCtrl $sHipJnt 1 "parent" 0 "RotExtract" "" "tweaker" `;
+	string $startExtrac[] = `hn_creCtrl $sChestJnt 1 "parent" 0 "RotExtract" "" "tweaker" `;
+	
+	parentConstraint $sChestJnt $startExtrac[1];
+	parentConstraint $sHipJnt $endExtrac[1];
+	delete $startExtrac[0] $endExtrac[0];
+
+	parent $startExtrac[2] $endExtrac[2] `substitute "jnt" $ctlChain "ctl" `;
+	parent $upObj `substitute "jnt" $ctlChain "ctl" `;
+
+	string $dmStart = `shadingNode -n ("dm_" + $startExtrac[2]) -asUtility decomposeMatrix`;
+	string $dmEnd = `shadingNode -n ("dm_" + $endExtrac[2]) -asUtility decomposeMatrix`;
+	connectAttr -f ($startExtrac[1] + ".matrix") ( $dmStart + ".inputMatrix");
+	connectAttr -f ($endExtrac[1] + ".matrix") ( $dmEnd + ".inputMatrix");
+
+	float $increase = 1.0 / (`size $child`-1) ;
+
+	for($i = 0; $i <`size $child`; $i ++){
+		float $percent = $i * $increase;
+		string $slerp = `shadingNode -n ("qS_" + $child[$i]) -asUtility quatSlerp`;
+		string $convert2E = `shadingNode -n ("qS2E_" + $child[$i]) -asUtility quatToEuler`;
+		connectAttr -f ($slerp + ".outputQuat") ($convert2E + ".inputQuat");
+		connectAttr -f ( $dmStart + ".outputQuat") ($slerp + ".input1Quat");
+		connectAttr -f ( $dmEnd + ".outputQuat") ($slerp + ".input2Quat");
+		setAttr ($slerp + ".inputT") $percent;
+		connectAttr -f ($convert2E + ".outputRotateY") ($directOffset2Grp[$i] + ".rotateY");
+	}
+	
+}

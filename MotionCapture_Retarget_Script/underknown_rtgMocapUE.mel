@@ -1,0 +1,500 @@
+global proc Chase_copAnim(string $charNamespace){
+	string $child[] = `listRelatives -ad -type "transform" "root"`;
+	for ($x in $child){
+		if ($x == "pelvis"){
+			catchQuiet (`parentConstraint -n "consToDel" ($charNamespace + "_" + $x) $x`);
+		}else{
+			catchQuiet (`orientConstraint -n "consToDel" ($charNamespace + "_" + $x) $x`);
+		}
+		
+	}
+	float $frameCount[] = `keyframe -query -tc ( $child[0] + ".rx")`;
+	string $timeRange = "0:" + $frameCount[`size $frameCount` -1];
+
+	playbackOptions -aet $frameCount[`size $frameCount` -1];
+	playbackOptions -ast 0;
+
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $child;
+	
+	string $del[] = `ls "consToDel" ($charNamespace + "*")`;
+	catchQuiet (`delete $del`);
+	
+}
+
+global proc Chase_rtgRawAnim(){
+	string $baseSke =  "H:/0_WORK/0_UpWork/2_Underknown/Assets/rtgMannequinUE5_Rig.ma";
+	string $listAnim[] = `getFBXFiles "H:/0_WORK/0_UpWork/2_Underknown/Assets/Raw Mocap VenusMercuryMars"`;
+
+	for ($x in $listAnim){
+		$x = substituteAllString($x, "\n", "");
+		$x = substituteAllString($x, "\r", "");
+
+		string $fileName = `substitute ".fbx" $x ""`;
+		$fileName = `match "[^/\\\\]+$" $fileName `;
+
+		file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o $baseSke;
+		file -import -type "FBX"  -ignoreVersion -ra true -mergeNamespacesOnClash false -options "fbx" -rpr $fileName -importFrameRate true -pr -importTimeRange "combine" $x;
+		file -import -type "FBX"  -ignoreVersion -options "fbx" "H:/0_WORK/0_UpWork/2_Underknown/Assets/chaseProxy.fbx";
+
+		Chase_copAnim $fileName;
+
+		delTwist;
+		delFootBall;
+		fixHand;
+		DeleteAllStaticChannels;
+		udk_settimeline;
+
+		delete "Body" "HeadFaceless";
+
+		string $directoryPath = `match "^(.*[/])" $x`;
+
+		string $outputFileName = ($directoryPath + $fileName +"_v.000.ma");
+		file -rename $outputFileName;
+		file -f -save  -options "v=0;";
+	}
+	
+}
+
+global proc string[] getFBXFiles(string $directory) {
+	string $allFBXFiles[];
+
+	string $foldersList = `system("dir \"" + $directory + "\" /b /ad")`;
+	string $folders[];
+	tokenize($foldersList, "\n", $folders);
+
+	for ($folder in $folders) {
+		if ($folder != "") {
+			string $folderPath = $directory + "/" + $folder;
+			string $fbxFilesList = `system("dir \"" + $folderPath + "\\*.fbx\" /b")`;
+
+			string $fbxFiles[];
+			tokenize($fbxFilesList, "\n", $fbxFiles);	
+
+			for ($file in $fbxFiles) {
+				if ($file != "") {
+					$folderPath = substituteAllString($folderPath, "\n", "");
+					$folderPath = substituteAllString($folderPath, "\r", "");
+					string $filePath = $folderPath + "/" + $file;
+
+					$allFBXFiles[size($allFBXFiles)] = $filePath;
+				}
+			}
+		}
+	}
+
+	return $allFBXFiles;
+}
+
+
+global proc ikLegs(){
+	string $select [] = `ls -sl`;
+	string $dupIt[] = `duplicate -po -rc $select`;
+	string $kneeName = ("loc_" + $dupIt[1]) ;
+	for ($x in $dupIt){
+		string $loc[] = `spaceLocator -n ("loc_" + $x)`;
+		string $locChild[] = `spaceLocator -n ("locChild_" + $x)`;
+		parent $locChild[0] $loc[0];
+		parentConstraint -n "toDel" $x $loc[0];
+		delete "toDel";
+	}
+	string $ball[] =`duplicate -rc -n ("loc_ball_" + $dupIt[3]) ("loc_" + $dupIt[3])`;
+
+	aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 0 -1 -upVector 0 1 0 -worldUpType "vector" -worldUpVector 0 1 0 $dupIt[2] ("loc_" + $dupIt[3]) ;
+	delete "toDel";
+
+	if ($kneeName == ""){
+		print "\n\nKNEE PAIN\n\n";
+	}else{
+		hn_pythonFindPoleVec  $select [0] $select [1] $select [2] $kneeName;
+
+		select $dupIt;
+		makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+		select -cl; select  $dupIt[0] $dupIt[2];
+		string $footIk[] = `ikHandle -n ("ikRTG_"+ $dupIt[0]) -sol ikRPsolver`;
+		poleVectorConstraint ("locChild_" + $dupIt[1]) $footIk[0];
+		setAttr ($footIk[0] + ".v" ) 0;
+
+		parent $footIk[0] ("locChild_" + $dupIt[3]);
+		parent $dupIt[0] ("locChild_" + $dupIt[0]);
+
+		delete  $dupIt[3] ("loc_" + $dupIt[2]);
+
+		parentConstraint -n "toDel" -mo $select[1] $kneeName;
+		parentConstraint  -mo "pelvis"  ("loc_" + $dupIt[0]);
+		pointConstraint -n "toDel" -mo $select[3] ("loc_" + $dupIt[3]);
+		aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 0 -1 -upVector 0 1 0 -worldUpType "vector" -worldUpVector 0 1 0 $select[2] ("loc_" + $dupIt[3]) ;
+
+		string $upVec[] = `duplicate -po -name ("jnt_upVec_" + $select[2] ) $select[2]`;
+		parent $upVec[0] $select[2];
+		setAttr ($upVec[0] + ".tz") 30;
+		parent  $upVec ("locChild_" + $dupIt[3]); 
+		// parentConstraint -mo -n "toDel" $select[2] $upVec[0] ;
+
+		aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 0 1 -upVector 1 0 0 -worldUpType "object" -worldUpObject $upVec[0] ("locChild_" + $dupIt[3]) $dupIt[2];
+
+		parentConstraint -n "del" $select[3] $ball[0]; delete "del";
+		parent $ball[0] $select[3]; 
+		setAttr ($ball[1] + ".tz") 30; parent -w $ball[1];
+		setAttr ($ball[0] + ".tx") -30; parent -w $ball[0];
+		parent $ball[1] $ball[0];
+
+		parentConstraint -mo -n "toDel" -skipTranslate y -weight 1  $select[3] $ball[0];
+
+		float $frameCount[] = `keyframe -query -tc ( $select[0] + ".rx")`;
+		string $timeRange = "0:" + $frameCount[`size $frameCount` -1];
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true {("loc_" + $dupIt[3]) ,  ("loc_" + $dupIt[1]),  $ball[0] };
+
+		delete `ls "*toDel*"`;
+
+		orientConstraint -mo $dupIt[0] $select[0];
+		orientConstraint  -mo $dupIt[1] $select[1];
+		orientConstraint -mo $dupIt[2] $select[2];
+		aimConstraint  -offset 0 0 0 -weight 1 -aimVector -1 0 0 -upVector 0 0 1 -worldUpType "object" -worldUpObject $ball[1]  $ball[0] $select[3]  ;
+		select -cl;
+	}
+
+}
+
+global proc hn_pythonFindPoleVec(string $upper , string $knee, string $foot, string $poleLoc){
+	string $cmd1 = "from maya import cmds as cmds;from maya import OpenMaya as om;";
+	string $cmd2 = ("posA = om.MVector(*cmds.xform(\""+ $upper +"\", q=True, ws=True, t=True))");
+	string $cmd3 = ("posB = om.MVector(*cmds.xform(\""+ $knee +"\", q=True, ws=True, t=True))");
+	string $cmd4 = ("posC = om.MVector(*cmds.xform(\""+ $foot +"\", q=True, ws=True, t=True))");
+	string $cmd5 = "AC = posC - posA;AB = posB - posA;BC = posC - posB;multiplier = (AC*AB)/(AC*AC);projection = AC * multiplier + posA;direction = (posB - projection).normal();total_length = AB.length() + BC.length();pos = posB + (direction*total_length)";
+	string $cmd6 = ("cmds.xform(\" " + $poleLoc + "\", t=[pos.x, pos.y, pos.z], ws=True)");
+
+	python($cmd1);
+	python($cmd2);
+	python($cmd3);
+	python($cmd4);
+	python($cmd5);
+	python($cmd6);
+}
+
+
+global proc ikArms(){
+	string $select [] = `ls -sl`;
+	string $dupIt[] = `duplicate -po -rc $select`;
+	string $elbowName = ("loc_" + $dupIt[1]) ;
+	for ($x in $dupIt){
+		string $loc[] = `spaceLocator -n ("loc_" + $x)`;
+		string $locChild[] = `spaceLocator -n ("locChild_" + $x)`;
+		parent $locChild[0] $loc[0];
+		parentConstraint -n "toDel" $x $loc[0];
+		delete "toDel";
+	}
+
+	if ($elbowName == ""){
+		print "\n\nElBOW PAIN\n\n";
+	}else{
+		hn_pythonFindPoleVec  $select [0] $select [1] $select [2] $elbowName;
+		select $dupIt;
+		makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+		select -cl; select  $dupIt[0] $dupIt[2];
+		string $elbowIk[] = `ikHandle -n ("ikRTG_"+ $dupIt[0]) -sol ikRPsolver`;
+		poleVectorConstraint ("locChild_" + $dupIt[1]) $elbowIk[0];
+		setAttr ($elbowIk[0] + ".v" ) 0;
+
+		parent $elbowIk[0] ("locChild_" + $dupIt[2]);
+		parent $dupIt[0] ("locChild_" + $dupIt[0]);
+
+		string $clavName[] = `listRelatives -p $select[0]`;
+		parentConstraint -n "toDel" -mo $select[1] $elbowName;
+		parentConstraint  -mo $clavName[0]  ("loc_" + $dupIt[0]);
+		parentConstraint -n "toDel" -mo $select[2] ("loc_" + $dupIt[2]);
+
+		string $dupWrist[] = `duplicate -po -rc -n ("jnt_" + $dupIt[2])  $dupIt[2]`;
+		parent $dupWrist[0] ("locChild_" + $dupIt[2]);
+
+		float $frameCount[] = `keyframe -query -tc ( $select[0] + ".rx")`;
+		string $timeRange = "0:" + $frameCount[`size $frameCount` -1];
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true { ("loc_" + $dupIt[1]), ("loc_" + $dupIt[2])};
+
+		delete `ls "*toDel*"`;
+
+		orientConstraint  -mo $dupIt[0] $select[0];
+		orientConstraint  -mo $dupIt[1] $select[1];
+		parentConstraint  -mo $dupWrist[0] $select[2];
+	}
+	
+}
+
+global proc deleteRtgIk(int $bake){
+	if($bake == 1){
+		string $ske[] = `listRelatives -ad -pa -type "joint" "root*"`;
+
+		float $frameCount[] = `keyframe -query -tc ( $ske[0] + ".rx")`;
+		string $timeRange = "0:" + $frameCount[`size $frameCount` -1];
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $ske;
+
+		print "\nDONE BAKE\n";
+	}
+
+	delete `ls "toDel*" "loc_*" "jnt_*" `;
+	
+}
+
+global proc parentConstMo(){
+	string $sel[] = `ls -sl`;
+	parentConstraint -mo -n "RTG_toDel" $sel[0] $sel[1];
+}
+
+global proc bakeCurrent(){
+	int $end = `playbackOptions -q -max`; 
+	int $start = `playbackOptions -q -min `;
+	string $timeRange = $start + ":"+ $end;
+	string $sel [] = `ls -sl`;
+
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $sel;
+
+	catchQuiet(`delete "RTG_toDel"`);
+
+}
+
+
+
+global proc fixHand(){
+	
+	string $list[] = {"index_metacarpal_l","index_01_l","index_02_l","index_03_l","middle_metacarpal_l","middle_01_l","middle_02_l","middle_03_l","thumb_02_l","thumb_03_l","pinky_metacarpal_l","pinky_01_l","pinky_02_l","pinky_03_l","ring_metacarpal_l","ring_01_l","ring_02_l","ring_03_l","pinky_metacarpal_r","pinky_01_r","pinky_02_r", "pinky_03_r", "ring_metacarpal_r","ring_01_r","ring_02_r","ring_03_r","middle_metacarpal_r","middle_01_r","middle_02_r","middle_03_r","index_metacarpal_r","index_01_r","index_02_r","index_03_r" , "thumb_02_r","thumb_03_r"};
+	// string $prefix = "SKM_Manny_Simple2:";
+	// for($x in $list){
+	// 	float $tran[] = `getAttr ($prefix + $x + ".t")` ;
+	// 	float $rot[] = `getAttr ($prefix + $x + ".r")` ;
+	// 	string $t = "setAttr " + ($x + ".t") + " " + $tran[0]  + " " +  $tran[1]  + " " +  $tran[2]  + " ;";
+	// 	string $rx = "setAttr"  + " " + ($x + ".rx")  + " " +  $rot[0]  + " ;";
+	// 	string $ry = "setAttr"  + " " + ($x + ".ry") + " " +  $rot[1] + " ;";
+	// 	print $t;
+	// 	print "\n";
+	// 	print $rx;
+	// 	print "\n";
+	// 	print $ry;
+	// 	print "\n";}
+
+	for($x in $list){
+		catchQuiet(`cutKey  -attribute rotateX -option keys $x`);
+		catchQuiet(`cutKey  -attribute rotateY -option keys $x`);
+		setAttr ($x + ".rx") 0;
+		setAttr ($x + ".ry") 0;
+	}
+
+	setAttr index_metacarpal_l.t 3.444506168 -0.3846808076 -2.379324436 ;
+	setAttr index_metacarpal_l.rx 3.287746455 ;
+	setAttr index_metacarpal_l.ry 7.325501668 ;
+	setAttr index_01_l.t 5.877098083 0.04318173602 0.2408756912 ;
+	setAttr index_01_l.rx 1.272221873e-14 ;
+	setAttr index_01_l.ry -6.361109363e-15 ;
+	setAttr index_02_l.t 4.079999924 1.421085472e-14 -9.237055565e-14 ;
+	setAttr index_02_l.rx 1.272221873e-14 ;
+	setAttr index_02_l.ry -1.272221873e-14 ;
+	setAttr index_03_l.t 2.595000029 2.842170943e-14 -2.486899575e-14 ;
+	setAttr index_03_l.rx 1.908332809e-14 ;
+	setAttr index_03_l.ry -1.908332809e-14 ;
+	setAttr middle_metacarpal_l.t 3.375833511 -0.7535707355 -0.182864368 ;
+	setAttr middle_metacarpal_l.rx -4.272500303 ;
+	setAttr middle_metacarpal_l.ry -0.1307511446 ;
+	setAttr middle_01_l.t 6.098208904 8.526512829e-14 2.131628207e-14 ;
+	setAttr middle_01_l.rx 1.908332809e-14 ;
+	setAttr middle_01_l.ry 9.541664044e-15 ;
+	setAttr middle_02_l.t 5.169000149 0 4.263256415e-14 ;
+	setAttr middle_02_l.rx 6.361109363e-15 ;
+	setAttr middle_02_l.ry 9.541664044e-15 ;
+	setAttr middle_03_l.t 2.473999977 3.552713679e-14 0 ;
+	setAttr middle_03_l.rx 6.361109363e-15 ;
+	setAttr middle_03_l.ry -0 ;
+	setAttr thumb_02_l.t 4.377999783 9.947598301e-14 -9.947598301e-14 ;
+	setAttr thumb_02_l.rx 3.530628 ;
+	setAttr thumb_02_l.ry -1.932290496 ;
+	setAttr thumb_03_l.t 3.085999966 5.684341886e-14 8.526512829e-14 ;
+	setAttr thumb_03_l.rx 0 ;
+	setAttr thumb_03_l.ry 1.590277341e-15 ;
+	setAttr pinky_metacarpal_l.t 3.3143785 -0.305917263 2.391110897 ;
+	setAttr pinky_metacarpal_l.rx -27.76904913 ;
+	setAttr pinky_metacarpal_l.ry -19.52770307 ;
+	setAttr pinky_01_l.t 4.957567692 -0.1431203932 -0.1988402754 ;
+	setAttr pinky_01_l.rx 10.49164006 ;
+	setAttr pinky_01_l.ry 0.6050426427 ;
+	setAttr pinky_02_l.t 3.815999985 1.98951966e-13 5.684341886e-14 ;
+	setAttr pinky_02_l.rx -8.827812596e-32 ;
+	setAttr pinky_02_l.ry -1.590277341e-15 ;
+	setAttr pinky_03_l.t 2.039999962 -1.421085472e-14 1.776356839e-14 ;
+	setAttr pinky_03_l.rx 0 ;
+	setAttr pinky_03_l.ry -3.180554681e-15 ;
+	setAttr ring_metacarpal_l.t 3.374303818 -0.5425168872 1.091756582 ;
+	setAttr ring_metacarpal_l.rx -13.29983489 ;
+	setAttr ring_metacarpal_l.ry -11.80931865 ;
+	setAttr ring_01_l.t 5.645516872 -0.04162453488 -0.02068917453 ;
+	setAttr ring_01_l.rx 6.395844445 ;
+	setAttr ring_01_l.ry -0.1169380137 ;
+	setAttr ring_02_l.t 4.977000237 -9.947598301e-14 -9.592326933e-14 ;
+	setAttr ring_02_l.rx -1.272221873e-14 ;
+	setAttr ring_02_l.ry 1.749305075e-14 ;
+	setAttr ring_03_l.t 2.265000105 3.552713679e-14 1.634248292e-13 ;
+	setAttr ring_03_l.rx -6.361109363e-15 ;
+	setAttr ring_03_l.ry 2.544443745e-14 ;
+	setAttr pinky_metacarpal_r.t -3.314677238 0.305935353 -2.39128685 ;
+	setAttr pinky_metacarpal_r.rx -27.76904913 ;
+	setAttr pinky_metacarpal_r.ry -19.52770307 ;
+	setAttr pinky_01_r.t -4.957300663 0.1432614625 0.1989202499 ;
+	setAttr pinky_01_r.rx 10.49164006 ;
+	setAttr pinky_01_r.ry 0.6050426427 ;
+	setAttr pinky_02_r.t -3.816036224 3.03660254e-05 3.262920654e-05 ;
+	setAttr pinky_02_r.rx -9.541664044e-15 ;
+	setAttr pinky_02_r.ry -7.951386704e-15 ;
+	setAttr pinky_03_r.t -2.039999723 -1.752387652e-05 -3.100296453e-05 ;
+	setAttr pinky_03_r.rx 1.707547273e-06 ;
+	setAttr pinky_03_r.ry 1.590277329e-15 ;
+	setAttr ring_metacarpal_r.t -3.374207973 0.5429917574 -1.091781616 ;
+	setAttr ring_metacarpal_r.rx -13.29983489 ;
+	setAttr ring_metacarpal_r.ry -11.80931865 ;
+	setAttr ring_01_r.t -5.645711899 0.04144349322 0.02067497373 ;
+	setAttr ring_01_r.rx 6.395844445 ;
+	setAttr ring_01_r.ry -0.1169380137 ;
+	setAttr ring_02_r.t -4.977067471 -2.084683364e-05 -2.361202133e-05 ;
+	setAttr ring_02_r.rx -6.361109363e-15 ;
+	setAttr ring_02_r.ry 3.180554681e-15 ;
+	setAttr ring_03_r.t -2.264974594 5.001757016e-05 -1.122148842e-05 ;
+	setAttr ring_03_r.rx -1.272221873e-14 ;
+	setAttr ring_03_r.ry 7.951386704e-15 ;
+	setAttr middle_metacarpal_r.t -3.375800133 0.754003942 0.1828055233 ;
+	setAttr middle_metacarpal_r.rx -4.272500303 ;
+	setAttr middle_metacarpal_r.ry -0.1307511446 ;
+	setAttr middle_01_r.t -6.098365784 -0.0001238507248 1.430381875e-06 ;
+	setAttr middle_01_r.rx -3.180554681e-15 ;
+	setAttr middle_01_r.ry -9.541664044e-15 ;
+	setAttr middle_02_r.t -5.168991566 -7.74385917e-05 -3.704566916e-05 ;
+	setAttr middle_02_r.rx -1.272221873e-14 ;
+	setAttr middle_02_r.ry -1.113194139e-14 ;
+	setAttr middle_03_r.t -2.474046946 4.577730579e-05 3.438501517e-05 ;
+	setAttr middle_03_r.rx -9.541664044e-15 ;
+	setAttr middle_03_r.ry -1.431249607e-14 ;
+	setAttr index_metacarpal_r.t -3.444514036 0.3851668239 2.379308701 ;
+	setAttr index_metacarpal_r.rx 3.287746455 ;
+	setAttr index_metacarpal_r.ry 7.325501668 ;
+	setAttr index_01_r.t -5.877205372 -0.04341236129 -0.2409516424 ;
+	setAttr index_01_r.rx -3.180554681e-15 ;
+	setAttr index_01_r.ry -9.541664044e-15 ;
+	setAttr index_02_r.t -4.07993269 5.040205878e-06 3.210666181e-05 ;
+	setAttr index_02_r.rx -1.908332809e-14 ;
+	setAttr index_02_r.ry -4.770832022e-15 ;
+	setAttr index_03_r.t -2.595076323 3.960218602e-05 -3.560681982e-06 ;
+	setAttr index_03_r.rx -1.590277341e-14 ;
+	setAttr index_03_r.ry 3.180554681e-15 ;
+	setAttr thumb_02_r.t -4.377824783 0.000427129562 -0.0001357454603 ;
+	setAttr thumb_02_r.rx 3.530628 ;
+	setAttr thumb_02_r.ry -1.932290496 ;
+	setAttr thumb_03_r.t -3.085952282 -1.485116083e-05 4.582558176e-05 ;
+	setAttr thumb_03_r.rx 0 ;
+	setAttr thumb_03_r.ry -9.541664044e-15 ;
+
+
+}
+
+global proc delTwist(){
+	string $twistJnts[] = `ls -type "joint" "*twist*" `;
+	for($x in $twistJnts){
+		catchQuiet(`cutKey  -attribute r -option keys $x`);
+		setAttr ($x + ".r") 0 0 0;
+	}
+}
+
+global proc udk_settimeline(){
+
+	float $frameCount[];
+	if(`objExists "spine_01"` == 0){
+		string $sel[] = `ls -sl`;
+		$frameCount = `keyframe -query -tc ( $sel[0] + ".rx")`;
+	}else{
+		$frameCount = `keyframe -query -tc "spine_01.rx"`;
+	}
+	playbackOptions -ast 0;
+	playbackOptions -aet $frameCount[`size $frameCount` -1];
+	playbackOptions -min 0 -max $frameCount[`size $frameCount` -1];
+
+
+}
+
+
+global proc delFootBall(){
+	string $ballJnts[] = `ls -type "joint"  "ball_*"`;
+	for($x in $ballJnts){
+		catchQuiet(`cutKey  -attribute rotateX -option keys $x`);
+		catchQuiet(`cutKey  -attribute rotateY -option keys $x`);
+		setAttr ($x + ".rx") 0 ;
+		setAttr ($x + ".ry") 0 ;
+	}
+}
+
+
+global proc exportSel(){
+		
+	string $folderPath = "H:/0_WORK/0_UpWork/2_Underknown/Assets/finishMaya";  
+	string $fileList[] = `getFileList -folder $folderPath`;
+	for ($x in $fileList){
+		file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o ($folderPath + "/" + $x);
+		string $fileName = `substitute "_v.*.ma" $x ""`;
+		catchQuiet (`parent -w "root"`);
+		delete "SKM_Manny_Simple" "Character1_Ctrl_Reference";
+		udk_settimeline;
+		select "root";
+		file -force -options "v=0;p=17;f=0" -typ "FBX export" -pr -es ("H:/0_WORK/0_UpWork/2_Underknown/Assets/exportedFBX/"+ $fileName +"_RTG.fbx");
+	}
+	print "DONE!";
+}
+
+
+global proc arHipFix(){
+	string $loc[] = `spaceLocator -n "toDel"`;
+	string $pc[] = `parentConstraint "jnt_femaleFarmer_Hip" $loc[0] `;
+	select -cl; select "jnt_femaleFarmer_Spine1";
+	udk_settimeline;
+	select -cl; select $loc[0];
+	bakeCurrent;
+	delete $pc;
+	string $pc2[] = `parentConstraint $loc[0] "jnt_femaleFarmer_Hip"`;
+
+	cutKey -cl -t ":" -f ":" -at "tx" -at "ty" -at "tz" -at "rx" -at "ry" -at "rz" "jnt_femaleFarmer_Root";
+	setAttr "jnt_femaleFarmer_Root.rotateZ" 0;
+	setAttr "jnt_femaleFarmer_Root.translateX" 0;
+	setAttr "jnt_femaleFarmer_Root.translateY" 0;
+	setAttr "jnt_femaleFarmer_Root.translateZ" 0;
+	setAttr "jnt_femaleFarmer_Root.rotateX" 0;
+	setAttr "jnt_femaleFarmer_Root.rotateY" 0;
+
+	select -cl; select "jnt_femaleFarmer_Hip";
+	bakeCurrent;
+	delete $pc2 $loc;
+}
+
+
+global proc UIudkTool(){
+	if (`window -exists udkWindow`) {
+		deleteUI udkWindow;
+	}
+
+	window -title "Underknown Tool" -widthHeight 300 150 udkWindow;
+
+	gridLayout -numberOfColumns 3 -cellWidthHeight 100 50;
+
+	button -label "IK Leg" -command "ikLegs";
+	button -label "IK Arm" -command "ikArms";
+	button -label "Del IK" -command "deleteRtgIk 0";
+	button -label "Bake + Del IK" -command "deleteRtgIk 1";
+	button -label "PConst mo" -command "parentConstMo";
+	button -label "Bake Select" -command "bakeCurrent";
+	button -label "Del Twist Jnts" -command "delTwist";
+	button -label "Fix Hand" -command "fixHand";
+	button -label "Set Timeline" -command "udk_settimeline";
+	button -label "Del Rot Balls" -command "delFootBall";
+	button -label "Batch Export" -command "exportSel";
+	button -label "RTG Exec" -command "Chase_rtgRawAnim";
+	button -label "AR Hip fix" -command "arHipFix";
+	
+
+	showWindow udkWindow;
+
+}

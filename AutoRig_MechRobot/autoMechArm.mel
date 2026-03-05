@@ -1,0 +1,834 @@
+/*
+Script:     autoMechArm
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Automated arm rigging setup with IK/FK switching, controls, and constraints
+*/
+
+global proc autoMechArm(string $oriJnt , string $side,  int $makePipe, int $makeCover){
+	
+	// tao Arm switch ik fk
+	string $locSwitch[] = `spaceLocator -n ("ArmSettings" + $side ) -p 0 0 0`;
+	string $locSwitchShape[] = `listRelatives -s $locSwitch[0]`;
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpz");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsz");
+	addAttr -ln "ik"  -at long  -min 0 -max 1 -dv 1 -keyable true $locSwitchShape[0];
+	addAttr -ln "upperLength"  -at double  -dv 1 -keyable true $locSwitchShape[0];
+	addAttr -ln "lowerLength"  -at double  -dv 1 -keyable true $locSwitchShape[0];
+
+	string $dupFk[] = `duplicate -rr -n "Fk" $oriJnt`;
+	string $fkJnt = `renameJntChain $oriJnt $dupFk[0] "Fk"`;
+	string $fkChild[] = `listRelatives -ad -type "joint" $fkJnt `;
+	// tao ctl fk
+	aMA_creFkCtrl $fkJnt $locSwitchShape[0];
+
+	string $dupIk[] = `duplicate -rr -n "Ik" $oriJnt`;
+	string $ikJnt = `renameJntChain $oriJnt $dupIk[0] "Ik"`;
+
+	// tao ctl ik
+	string $ikCtlsName[] = `aMA_creIkCtrl $ikJnt $locSwitchShape[0] `;
+	string $ctlArmUpName = $ikCtlsName[0];
+	string $ctlHandGimbalName = $ikCtlsName[2];
+	string $ctlHandName = $ikCtlsName[1];
+
+	// tao normal Ik
+	string $norIk[] = `aMA_normalIk $ikJnt $ctlHandGimbalName`;
+	parent $ikJnt $ctlArmUpName;
+	string $ikChild[] = `listRelatives -ad -type "joint" $ikJnt`;
+
+	// parent constraint ik va fk vao oriJnt
+	string $oriJntChild[] = `listRelatives -ad -type "joint" $oriJnt `;
+	string $pcName[] = `parentConstraint -n ("pC_" + $oriJnt ) -w 1 $ikJnt $fkJnt $oriJnt`;
+	connect2SettingsShape $locSwitchShape[0]  $pcName[0] $ikJnt $fkJnt;
+
+	for ($x= 0; $x < `size $oriJntChild`; $x ++){
+		string $pcChildName[] = `parentConstraint -n ("pC_" + $oriJntChild[$x] ) -w 1 $ikChild[$x] $fkChild[$x] $oriJntChild[$x]`;
+		connect2SettingsShape $locSwitchShape[0]  $pcChildName[0] $ikChild[$x] $fkChild[$x];
+	}
+	string $scChildName[] = `scaleConstraint -n ("sC_" + $oriJntChild[0] ) -w 1 $ctlHandGimbalName ("ctlGimbalFkHand" + $side) $oriJntChild[0]`;
+	connect2SettingsShape $locSwitchShape[0]  $scChildName[0] $ctlHandGimbalName ("ctlGimbalFkHand" + $side);	
+
+	// find pole vector
+	string $ArmLoPvLoc[] = `spaceLocator -n ("ArmLoPv" + $side ) -p 0 0 0`;
+	pythonFindPoleVec  $oriJnt $oriJntChild[2] $oriJntChild[1]  $ArmLoPvLoc[0] ;
+	poleVectorConstraint $ArmLoPvLoc[0] $norIk[0];
+	string $pvCtlName = `creCtrl $ArmLoPvLoc[0] "parent" 0 "" $locSwitchShape[0] "ik"`;
+	$ArmLoPvLoc[0] = `rename $ArmLoPvLoc[0] ("loc_"+ $ArmLoPvLoc[0])`;
+	parent $ArmLoPvLoc[0] $pvCtlName;
+	connectAttr -f ($locSwitchShape[0] + ".ik") ($pvCtlName + ".v" ) ;
+	
+	// end find pole vector
+
+	// tao ctrl cho thumb va finger
+	string $grpThumb = `hn_creFkChainCtl ("jntThumb" + $side) "parent" `;
+	string $grpFi = `hn_creFkChainCtl ("jntFinger" + $side) "parent" `;
+	parentConstraint -mo $oriJntChild[0] $grpThumb;
+	parentConstraint -mo $oriJntChild[0] $grpFi;
+	// end tao ctrl cho thumb va finger
+
+	// tao loc Ik match
+	string $ikMLoc[] = ` spaceLocator -n ("locFkHandIkMatch" + $side)  -p 0 0 0 `;
+	parentConstraint -n "todel" $ctlHandGimbalName $ikMLoc; delete `ls "*todel*"`;
+	parent $ikMLoc[0] $fkChild[0];
+	//  end tao loc Ik match
+
+	// tao fk scale
+	connectAttr -f ($locSwitchShape[0] + ".upperLength") ("driver_ctlGimbalFkArmUp" + $side + ".scaleY");
+	connectAttr -f ($locSwitchShape[0] + ".lowerLength") ("driver_ctlGimbalFkArmLo" + $side + ".scaleY");
+
+	string $endUpper = ` joint -n ("jntArmUpEnd" + $side)  -p 0 0 0 `;
+	parent -w $endUpper;
+	parentConstraint -n "del" $oriJntChild[2] $endUpper; 
+	delete "del";
+	parent $endUpper $oriJnt;
+	scaleConstraint -n ("sC_"+ $endUpper) "ctlPlacementGimbal" $endUpper ;
+
+	string $endLower = ` joint -n ("jntArmLoEnd" + $side)  -p 0 0 0 `;
+	parent -w $endLower;
+	parentConstraint -n "del" $oriJntChild[1] $endLower; 
+	delete "del";
+	parent $endLower $oriJntChild[2];
+	scaleConstraint -n ("sC_"+ $endLower) "ctlPlacementGimbal" $endLower ;
+
+	aMA_fkScale $endUpper $endLower $locSwitchShape[0];
+	
+	string $fkGrpArmLo = "grpFkArmLo" + $side;
+	string $fkGrpHand = "grpFkHand" + $side;
+	scaleConstraint -n ("sC_" + $fkGrpArmLo) "ctlBodyGimbal" $fkGrpArmLo;
+	scaleConstraint -n ("sC_" + $fkGrpHand) "ctlBodyGimbal" $fkGrpHand;
+
+	//  end fk scale
+
+	if($makePipe == 1){
+		//tao aMA_pipeCover
+		aMA_pipeCover $oriJntChild[0] $oriJntChild[2] $side ;
+		//end tao aMA_pipeCover
+	}
+
+	if($makeCover == 1){
+		// tao handCover
+		handCover $oriJntChild[0] $oriJntChild[2] $side;
+		// end tao handCover
+	}
+
+	// scale the Arm
+		scaleConstraint ctlPlacementGimbal $oriJntChild[2];
+		scaleConstraint ctlPlacementGimbal $oriJntChild[1];
+		scaleConstraint ctlPlacementGimbal $oriJnt;
+	// end scale the Arm
+
+
+	// clean scene
+	cleanLocAllScene;
+	cleanCb;
+	print "\nFINISH AUTO Arm RIG\n What to do next:\n Rig the slots \n\n\n";
+
+
+}
+
+global proc string renameJntChain(string $nameOfOriJnt, string $parentJntName,  string $jntChainType){
+	string $listChild[] = `listRelatives -ad -f $parentJntName `;
+	setAttr ($parentJntName + ".v") 0;
+	for($y in $listChild){
+		string $newName = `match  "[^|]*$" $y `;
+		$newName = `substitute "jnt" $newName ("jnt" + $jntChainType )`;
+		rename $y $newName;
+	}
+	string $parentNewName = `substitute "jnt" $nameOfOriJnt ("jnt" + $jntChainType )`;
+	rename $parentJntName $parentNewName;
+	return $parentNewName;
+}
+
+// tao control FK binh thuong
+
+global proc aMA_creFkCtrl(string $jnts, string $switch){
+    string $jntChild[] = `listRelatives -ad -type joint $jnts`;
+	$jntChild[`size $jntChild`] = $jnts;
+	string $grpFkJnt = "grpMechArmGuide";
+
+    for ($x in $jntChild){
+        string $ctlName = `creCtrl $x "parent" 0 "" $switch "fk"`;
+		string $ctlGimbalName = `creCtrl $x "parent" 0 "Gimbal" $switch "gimbalIk"`;
+		string $gimbalGrp = `substitute "ctl" $ctlGimbalName "grp" ` ;
+		parent $gimbalGrp $ctlName;	
+			// connect visibility of ik fk ctls
+		setDrivenKeyframe   -dv 1 -v 0 -cd ($switch + ".ik") ($ctlName + ".v" ) ;
+		setDrivenKeyframe   -dv 0 -v 1 -cd ($switch + ".ik") ($ctlName + ".v" ) ;	
+
+		if(`gmatch $x "*ArmEnd*"`){
+			string $shape1[] = `listRelatives -s $ctlName`;
+			string $shape2[] = `listRelatives -s $ctlGimbalName`;
+			setAttr ($shape1[0] + ".v") 0;
+			setAttr ($shape2[0] + ".v") 0;
+		}
+    }
+
+	for ($each in $jntChild){
+		string $parentJnt[] = `listRelatives -p -type "joint" $each`;
+		// string $countDriverGrp[] = {};
+
+		if(`size $parentJnt` != 0){		
+
+			string $pCtlName = `substitute "jnt" $parentJnt[0] "ctlGimbal"`;
+			string $cGrpName = `substitute "jnt" $each "grp"`;
+
+			string $driverGrp = `group -em -n ("driver_" + $pCtlName ) `;
+			parentConstraint -n "del" $pCtlName $driverGrp;
+			delete "del";
+			parent $driverGrp $pCtlName;
+			// $countDriverGrp[`size $countDriverGrp`] = $driverGrp;
+
+			string $inverseJnt = `substitute "grp" $cGrpName "jntInverse"`;
+			joint -n $inverseJnt -p 0 0 0; parent -w $inverseJnt;
+			parentConstraint -n "del" $cGrpName $inverseJnt; delete "del";
+			parent $cGrpName $inverseJnt;			
+			string $decMtx = `shadingNode -n ("dm_scale_" + $cGrpName ) -asUtility decomposeMatrix`;
+			connectAttr -f ($driverGrp + ".worldMatrix[0]")  ($decMtx + ".inputMatrix");
+			connectAttr -f ($decMtx + ".outputScale") ($inverseJnt + ".inverseScale");
+			parent $inverseJnt $driverGrp;
+		}
+
+		string $driverName = `substitute "jnt" $each "driver_ctlGimbal" `;
+		
+		if(`objExists $driverName `){
+			parentConstraint -mo $driverName $each;
+			scaleConstraint	-mo $driverName $each;	
+			catchQuiet (`parent $each $grpFkJnt`);
+		}else{
+			$driverName = `substitute "jnt" $each "ctlGimbal" `;
+			if(`objExists $driverName `){
+				parentConstraint -mo $driverName $each;
+				scaleConstraint	-mo $driverName $each;	
+				catch (`parent  $each $grpFkJnt `);					
+			}
+		}
+	}
+
+}
+
+global proc string creCtrl(string $y , string $constraintType, int $constaintJnt , string $prefix, string $switch, string $color){
+    string $name = `substitute "jnt" $y ""`;
+    string $loc[] = `spaceLocator -n ("grp" + $prefix + $name) -p 0 0 0`;
+	string $locOffset[] = `spaceLocator -n ("grpOffset" + $prefix + $name) -p 0 0 0`;
+	parent $locOffset[0] $loc[0];
+
+    string $ctrl = "";
+	if(`gmatch $prefix  "*Gimbal*"` ||`gmatch $y  "*Gimbal*"` ){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 -5.765563986 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	}else if( `gmatch $y  "*Pv*"`){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -2.856095997 0 0 -p 2.856095997 0 0 -p 0 0 0 -p 0 0 -2.856095997 -p 0 0 2.856095997 -p 0 0 0 -p 0 2.856095997 0 -p 0 -2.856095997 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 `;
+	}else{
+		$ctrl = `curve -n ("ctl" + $prefix + $name )    -d 3 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -p -9.070460289 -2.951531847e-15 -8.092550702e-16 -p -6.413783976 -3.344262848e-15 6.413783976 -p 1.089753318e-14 -3.506937355e-15 9.070460289 -p 6.413783976 -3.344262848e-15 6.413783976 -p 9.070460289 -2.951531847e-15 8.978946595e-16 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -k -2 -k -1 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 `;
+	}
+
+	if($switch != ""){
+		parent -r -s -add $switch $ctrl;
+
+	}
+	if ($constraintType == "parent"){
+		parentConstraint -n "toDel" -w 1 $y $loc[0];
+		parentConstraint -n "toDel2" -w 1 $y $ctrl;
+	}else{
+		if ($constraintType == "point"){
+		pointConstraint -n "toDel" -w 1 $y $loc[0];
+		pointConstraint -n "toDel2" -w 1 $y $ctrl;
+		}
+	}
+	
+	delete "toDel" "toDel2";
+    parent $ctrl $locOffset[0];
+	
+	if($constaintJnt == 1){
+		parentConstraint $ctrl $y;
+		scaleConstraint $ctrl $y;
+	}
+	ctlColorCode $ctrl $color;
+	return $ctrl;
+
+}
+
+// tao control IK bang cach point constraint. ctl phai theo world up, thang hang , ko xoay theo huong xuong
+// Ctl upper Arm vaf ctl Hand tao theo quy chuan Animschool
+// Ctl ArmLo co offset loc duoc parent constaint boi upper Arm va Hand, aimConstraint vao upper. Sau do parent ctl ArmLo vao loc bt
+
+global proc string [] aMA_creIkCtrl(string $jnts, string $switch){
+    string $jntChild[] = `listRelatives -ad -type joint $jnts`;
+	string $ctlArmUpName;
+	string $grpArmLoName;
+	string $ctlHandGimbalName;
+	string $ctlHandName;
+
+	for ($x in $jntChild){
+		if(`gmatch $x "*Hand*"`){
+			creCtrl $x "point" 0 "" $switch "ik";
+			string $grpHandName = `substitute "jnt" $x "grp" `;
+			$ctlHandName = `substitute "jnt" $x "ctl" `;
+			creCtrl $x "point" 0 "Gimbal" $switch "ik";
+			$ctlHandGimbalName = `substitute "jnt" $x "ctlGimbal" `;
+			string $grpHandGimbalName = `substitute "jnt" $x "grpGimbal" `;
+			parent $grpHandGimbalName $ctlHandName;
+			ctlColorCode $ctlHandGimbalName "gimbalIk";
+			ctlColorCode $ctlHandName "ik";
+			// connect visibility of ik fk ctls
+			connectAttr -f ($switch + ".ik") ($grpHandName + ".v" ) ;
+		}
+	}
+
+	creCtrl $jnts "point" 0 "" $switch "ik";
+	if(`gmatch $jnts "*Up*"`){
+		$ctlArmUpName = `substitute "jnt" $jnts "ctl" `;
+		string $grpArmUpName = `substitute "jnt" $jnts "grp" `;
+		connectAttr -f ($switch + ".ik") ($grpArmUpName + ".v" ) ;
+	}
+
+	if (`objExists $ctlArmUpName` == 0){
+		print ("\n--NOT FOUND: ctlArmUpName "+ $ctlArmUpName +"--\n");
+	}
+	if (`objExists $ctlHandGimbalName` == 0){
+		print ("\n--NOT FOUND: ctlHandGimbalName "+ $ctlHandGimbalName +"--\n");
+	}
+	
+// Them day du cac attr cho Hand IK ctl
+	addAttr -ln "twist"  -at double -dv 0 -keyable true $ctlHandName ;
+	return {$ctlArmUpName  , $ctlHandName , $ctlHandGimbalName};
+}
+
+
+// tao IK rotate plane solver binh thuong cho normal IK. Ikhandle point constraint vao HandGimbal ctl
+global proc string[] aMA_normalIk(string $parentJnt, string $HandGimbalCtlName){
+	string $childJnts[] = `listRelatives -ad -type "joint" $parentJnt`;
+	select -cl;
+	select  $parentJnt $childJnts[1];
+	string $HandIk[] = `ikHandle -n ("ikHandleHand_"+ $childJnts[1]) -sol ikRPsolver`;
+	float $ikPos[] = `xform -q -ws -t $HandIk[0]`;
+	string $offsetGrp = `group -em -n ("grpOffset" + $HandIk[0]) `;
+	setAttr ($offsetGrp + ".t") $ikPos[0] $ikPos[1] $ikPos[2];
+	parent $HandIk[0] $offsetGrp;
+
+	string $ikHandCtlName = `substitute "Gimbal" $HandGimbalCtlName ""`;
+	connectAttr -f ($ikHandCtlName + ".twist") ($HandIk[0]+  ".twist");
+
+	pointConstraint -mo $HandGimbalCtlName $offsetGrp ;
+	parentConstraint -mo $HandGimbalCtlName $childJnts[0];
+
+	return {$HandIk[0], $offsetGrp };
+}
+
+global proc caculateDistance(string $ikCtls[], string $upperRevJnt, string $HandRevJnt){
+	string $locArmUpDis[] = `spaceLocator -n ("locDis" + $ikCtls[0]) -p 0 0 0 `;
+	string $locArmLoDis[] = `spaceLocator -n ("locDis" + $ikCtls[1]) -p 0 0 0 `;
+	string $locHandDis[] = `spaceLocator -n ("locDis" + $ikCtls[2]) -p 0 0 0 `;
+	
+	parentConstraint -w 1 $ikCtls[0] $locArmUpDis[0];
+	parentConstraint -w 1 $ikCtls[1] $locArmLoDis[0];
+	parentConstraint -w 1 $ikCtls[2] $locHandDis[0];
+
+	string $ArmUpDis = `shadingNode -n ("dis_" + $ikCtls[0] + "_" + $ikCtls[1]  ) -asUtility distanceBetween`;
+	connectAttr -f ( $locArmUpDis[0] + ".translate") ($ArmUpDis + ".point1");
+	connectAttr -f ( $locArmLoDis[0] + ".translate") ($ArmUpDis + ".point2");
+	string $scaleUpper = `shadingNode -n ("md_scalePercent_" + $ArmUpDis ) -asUtility multiplyDivide`;
+	setAttr ($scaleUpper + ".operation") 2;
+	connectAttr -f ($ArmUpDis + ".distance") ( $scaleUpper + ".input1X");
+	setAttr  ($scaleUpper + ".input2X") `getAttr ($ArmUpDis + ".distance")`;
+	connectAttr -f ( $scaleUpper + ".outputX") ( $upperRevJnt+ ".scaleY");
+
+	string $lowerArmDis = `shadingNode -n ("dis_" + $ikCtls[1] + "_" + $ikCtls[2]  ) -asUtility distanceBetween`;
+	connectAttr -f ( $locArmLoDis[0] + ".translate") ($lowerArmDis + ".point1");
+	connectAttr -f ( $locHandDis[0] + ".translate") ($lowerArmDis + ".point2");
+	string $scaleLower = `shadingNode -n ("md_scalePercent_" + $lowerArmDis ) -asUtility multiplyDivide`;
+	setAttr ($scaleLower + ".operation") 2;
+	connectAttr -f ($lowerArmDis + ".distance") ( $scaleLower + ".input1X");
+	setAttr  ($scaleLower + ".input2X") `getAttr ($lowerArmDis + ".distance")`;
+	connectAttr -f ( $scaleLower + ".outputX") ( $HandRevJnt+ ".scaleY");
+}
+
+global proc cleanLocAllScene(){
+    string $grpAndLoc[] = `ls -type "locator" "ctl*" "*grp*" "*loc*" "*offset*" "*Setting*" "Eye*" `;
+    for($x in $grpAndLoc){
+		print $x; print "\n";
+		select -cl;
+		int $layer = catchQuiet (`editDisplayLayerMembers -noRecurse "LocatorShapes" $x`);
+		if ($layer == 1){
+			catchQuiet (`createDisplayLayer -name "LocatorShapes" -number 1 -nr`);
+			catchQuiet (`editDisplayLayerMembers -noRecurse "LocatorShapes" $x`);
+		}
+    }
+	string $ikHandles[] = `ls "*ikHandle*" `;
+	for($y in $ikHandles){
+		catchQuiet(`setAttr ($y + ".v") 0`);
+	}
+}
+
+global proc cleanCb(){
+	string $clearKey[] = `ls "ctl*" `;
+	for ($x in $clearKey ){
+		ihi $x;
+	} 
+
+	cleanCbP;
+}
+
+global proc ihi(string $ctrl){
+	string $listH[] = `listHistory $ctrl`;
+	for ($y in $listH){
+		if(!`gmatch $y "*Setting*"`){
+			catchQuiet (`connectAttr -f "ctlPlacement.ihiVis" ($y + ".ihi") `);
+		}
+	}
+}
+
+global proc ctlColorCode( string $x , string $ctlType){
+	float $ctlColorCode[];
+	if($ctlType == "ik" || $ctlType == "pelvis" ){
+		$ctlColorCode = {0.101961, 0.337255, 0.094118};
+	}
+
+	if($ctlType == "fk"){
+		$ctlColorCode = {0.254902, 0.286275, 0.686275};
+	}
+	if($ctlType == "errorIk"){
+		// $ctlColorCode = {0.109677, 0.362776, 0.10124};
+		$ctlColorCode = {0.101961, 0.337255, 0.094118};
+	}
+	if($ctlType == "gimbalIk" || $ctlType == "bodyGimbal"  ){
+		$ctlColorCode = {0.282353, 0.627451, 0.254902};
+	}
+
+	if($ctlType == "mid"){
+		$ctlColorCode = {0.141176, 0.572549, 0.584314};
+	}
+	if($ctlType == "placement" || $ctlType == "orient" || $ctlType == "body" || $ctlType == "placementGimbal"){
+		$ctlColorCode = {0.65098, 0.443137, 0.294118};
+	}
+
+	if($ctlType == "tweaker"){
+		$ctlColorCode = {0.141176, 0.572549 , 0.584314};
+	}
+
+	if($ctlType == "ribbon" || $ctlType == "direct" ){
+		$ctlColorCode = { 0.568627 , 0.34902 , 0.564706 };
+	}
+
+	if($ctlType == "eye"){
+		$ctlColorCode = { 0.056 , 0.703 , 0.703 };
+	}
+	if($ctlType == "yellowCtl"){
+		$ctlColorCode = { 1 , 1 , 0 };
+	}
+	if($ctlType == "eyeMaster"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}	
+
+// color code
+
+	setAttr ( $x + ".ovrgbf") yes;
+    setAttr ($x + ".ove") yes;
+    string $shape[] = `listRelatives -s $x`;
+    // set color
+    // Wire Color RGB
+	setAttr ($x + ".ovrgb") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2] ;
+    setAttr ($shape[0] + ".wfcc") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2];
+    // Use Object Color
+    setAttr ($shape[0] + ".uoc") 2;
+}
+
+
+
+global proc cleanCbP(){
+    string $listDep[] =`ls -dep`;
+    string $objIih[] = {"place2dTexture","file","RedshiftMaterial","layeredTexture","RedshiftColorLayer","decomposeMatrix","polySmoothFace", "reference", "reverse", "remapValue", "blendShape" , "skinCluster", "shapeEditorManager", "multDoubleLinear", "nonLinear", "createColorSet", "ffd", "tweak", "polyTweakUV", "nurbsTessellate" , "ngSkinLayerData", "cluster" , "wrap", "lambert", "deleteComponent", "deltaMush" , "plusMinusAverage", "wire", "multiplyDivide", "clamp", "condition", "nodeGraphEditorInfo", "blendColors", "dagPose" , "setRange", "parentConstraint", "pointConstraint" , "scaleConstraint", "orientConstraint", "aimConstraint", "blendTwoAttr"  };
+    for ($x in $listDep){
+        string $type = `objectType $x`;
+        int $match = stringArrayContains( $type , $objIih );
+        if ($match == 1 ){
+			if(!`gmatch $x "*Setting*"`){
+				catchQuiet (`connectAttr -f "ctlPlacement.ihiVis" ($x + ".ihi") `);
+			}
+		}
+    }
+}
+
+
+global proc connect2SettingsShape(string $settingsSh, string $constraintName, string $parentIk, string $parentFk){
+	connectAttr -f ($settingsSh + ".ik") ($constraintName + "." + $parentIk + "W0") ;
+	setDrivenKeyframe   -dv 1 -v 0 -cd ($settingsSh + ".ik") ($constraintName + "." + $parentFk + "W1") ;
+	setDrivenKeyframe   -dv 0 -v 1 -cd ($settingsSh + ".ik") ($constraintName + "." + $parentFk + "W1") ;
+	keyTangent -index 0 -inTangentType linear -outTangentType linear ($constraintName + "_" + $parentFk + "W1") ;
+	keyTangent -index 1 -inTangentType linear -outTangentType linear ($constraintName + "_" + $parentFk + "W1") ;
+
+}
+
+global proc pythonFindPoleVec(string $upper , string $ArmLo, string $Hand, string $poleLoc){
+	string $cmd1 = "from maya import cmds as cmds;from maya import OpenMaya as om;";
+	string $cmd2 = ("posA = om.MVector(*cmds.xform(\""+ $upper +"\", q=True, ws=True, t=True))");
+	string $cmd3 = ("posB = om.MVector(*cmds.xform(\""+ $ArmLo +"\", q=True, ws=True, t=True))");
+	string $cmd4 = ("posC = om.MVector(*cmds.xform(\""+ $Hand +"\", q=True, ws=True, t=True))");
+	string $cmd5 = "AC = posC - posA;AB = posB - posA;BC = posC - posB;multiplier = (AC*AB)/(AC*AC);projection = AC * multiplier + posA;direction = (posB - projection).normal();total_length = AB.length() + BC.length();pos = posB + (direction*total_length)";
+	string $cmd6 = ("cmds.xform(\" " + $poleLoc + "\", t=[pos.x, pos.y, pos.z], ws=True)");
+
+	python($cmd1);
+	python($cmd2);
+	python($cmd3);
+	python($cmd4);
+	python($cmd5);
+	python($cmd6);
+}
+
+global proc aMA_pipeCover(string $HandJnt, string $ArmLoJnt, string $side){
+	string $cover1 = `substitute $side $HandJnt ("Pipe01" + $side) `;
+	string $cover2 = `substitute $side $HandJnt ("Pipe02" + $side) `;	
+	duplicate -po -name $cover1 $HandJnt;
+	duplicate -po -name $cover2 $HandJnt;
+	parent $cover2 $cover1;
+	parent $cover1 $HandJnt;
+
+	string $HandCoverCtlName = `creCtrl $cover2 "parent" 1 "" "" "tweaker"`;
+	string $grpN = `substitute "ctl" $HandCoverCtlName "grp"`;
+
+	pointConstraint -mo -w 1 $cover1 $grpN;	 
+	aimConstraint -mo -weight 1 -aimVector 0 1 0 -upVector 1 0 0 -worldUpType "vector" -worldUpVector 1 0 0 $ArmLoJnt $grpN;
+
+}
+
+
+
+
+global proc attrsPlacement(string $plmtCtl){
+	addAttr -ln "geometryDisplay"  -at "enum" -en "Normal:Template:Reference:"  $plmtCtl;
+	setAttr -e-keyable true ($plmtCtl + ".geometryDisplay");
+	addAttr -ln "jointsVisibility"  -at "enum" -en "Hide:Show:"  $plmtCtl;
+	setAttr -e-keyable true ($plmtCtl + ".jointsVisibility");
+	addAttr -ln "___"  -at "enum" -en "__________:"  $plmtCtl;
+	setAttr -e-channelBox true ($plmtCtl + ".___");
+	addAttr -ln "bodyMainControlsVisibility"  -at "enum" -en "Hide:Show:"  $plmtCtl;
+	setAttr -e-keyable true ($plmtCtl + ".bodyMainControlsVisibility");
+	addAttr -ln "bodyTweaksControlsVisibility"  -at "enum" -en "Hide:Show:"  $plmtCtl;
+	setAttr -e-keyable true ($plmtCtl + ".bodyTweaksControlsVisibility");	
+}
+
+
+
+global proc scaleRig(){ 
+// normalize cho distance between
+	string $listdb[] = `ls -type "distanceBetween"`;
+	for($tgt in $listdb){
+		string $desa[] = `connectionInfo -dfs ($tgt + ".distance")`;
+		string $nor = `shadingNode -n ("md_Normalize_" + $tgt) -asUtility multiplyDivide`;
+		setAttr ($nor  + ".operation") 2;
+		string $mtxNode = `shadingNode -n "dm_PlacementScale" -asUtility decomposeMatrix`;
+		connectAttr -force ctlPlacementGimbal.worldMatrix[0]  ($mtxNode + ".inputMatrix");
+		connectAttr -f ($mtxNode + ".outputScale") ($nor + ".input2");
+		connectAttr -f ($tgt + ".distance") ($nor + ".input1X");
+		for ($each in  $desa){
+			connectAttr -f ($nor + ".outputX") $each;
+		}
+	}
+}
+
+global proc tempCtls(){
+	string $plmt = `curve -n "ctlPlacement"  -d 1 -p -28.87566196 0 -28.87566196 -p 28.87566196 0 -28.87566196 -p 28.87566196 0 28.87566196 -p -28.87566196 0 28.87566196 -p -28.87566196 0 -28.87566196 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	string $plmtGimbal = `curve -n "ctlPlacementGimbal"  -d 1 -p -24.86753436 0 -24.86753436 -p 24.86753436 0 -24.86753436 -p 24.86753436 0 24.86753436 -p -24.86753436 0 24.86753436 -p -24.86753436 0 -24.86753436 -k 0 -k 1 -k 2 -k 3 -k 4`;
+
+	string $tempIkPv = `curve -n "tempIkPvCtl"  -d 1 -p -2.856095997 0 0 -p 2.856095997 0 0 -p 0 0 0 -p 0 0 -2.856095997 -p 0 0 2.856095997 -p 0 0 0 -p 0 2.856095997 0 -p 0 -2.856095997 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 `;
+	string $tempSquareGimbal = `curve -n "tempIkGimbal"  -d 1 -p -1 0 -1 -p 1 0 -1 -p 1 0 1 -p -1 0 1 -p -1 0 -1 -k 0 -k 1 -k 2 -k 3 -k 4`;
+
+
+	ctlColorCode $plmt "placement";
+	ctlColorCode $plmtGimbal "placement";
+	ctlColorCode $tempIkPv "gimbalIk";
+	ctlColorCode $tempSquareGimbal "gimbalIk";
+
+	string $gPlmt = `group -n "grpPlacement" -em`;
+	parent $plmt $gPlmt;
+
+	string $gPlmtGimbal = `group -n "grpPlacementGimbal" -em`;
+	parent $plmtGimbal $gPlmtGimbal;
+
+	parent $gPlmtGimbal $plmt;
+
+	string $rigGrp = `group -n "grpRig" -em`;
+	string $dntGrp = `group -n "grpDNT" -em`;
+	string $tempCtlGrp = `group -n "grpTempCtl" -em`;
+	
+	setAttr ($dntGrp + ".v") 0;
+	parent $tempIkPv $tempCtlGrp;
+	parent $tempCtlGrp $dntGrp;
+	parent $dntGrp $rigGrp;
+	parent $gPlmt $rigGrp;
+	parent $tempSquareGimbal $tempCtlGrp;
+
+	attrsPlacement $plmt;
+
+	string $body = `curve -n "ctlBody"  -d 1 -p -28.87566196 0 -28.87566196 -p 28.87566196 0 -28.87566196 -p 28.87566196 0 28.87566196 -p -28.87566196 0 28.87566196 -p -28.87566196 0 -28.87566196 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	string $bodyGimbal = `curve -n "ctlBodyGimbal"  -d 1 -p -24.86753436 0 -24.86753436 -p 24.86753436 0 -24.86753436 -p 24.86753436 0 24.86753436 -p -24.86753436 0 24.86753436 -p -24.86753436 0 -24.86753436 -k 0 -k 1 -k 2 -k 3 -k 4`;
+	ctlColorCode $body "body";
+	ctlColorCode $bodyGimbal "gimbalIk";
+	string $gBody = `group -n "grpBody" -em`;
+	parent $body $gBody;
+	string $gBodyGimbal = `group -n "grpBodyGimbal" -em`;
+	parent $bodyGimbal $gBodyGimbal;
+	parent $gBodyGimbal $body;
+
+	if (`objExists "jntBody"`){
+		parentConstraint -n "del" "jntBody" "grpBody";
+		delete "del";
+		parent "grpBody" "ctlPlacementGimbal";
+		parentConstraint "ctlBodyGimbal" "jntBody";
+	}	
+}
+
+// Phai tu orient xuong tay truoc khi chay proc nay
+
+global proc buildArm( int $makePipe, int $makeCover){
+	string $jntsList[] = `listRelatives -ad -type "joint" "grpMechArmGuide" `;
+
+	parent "jntHandLf" "jntArmEndLf";
+	setAttr "jntHandLf.jointOrient" 0 0 0;
+
+	for ($x in $jntsList){
+		select -cl; select $x;
+		ToggleLocalRotationAxes;
+		setAttr ($x + ".drawLabel") 0;
+		setAttr -lock 0 ($x + ".tx");setAttr -lock 0 ($x + ".ty");setAttr -lock 0 ($x + ".tz");
+		setAttr -lock 0 ($x + ".rx");setAttr -lock 0 ($x + ".ry");setAttr -lock 0 ($x + ".rz");
+		setAttr -lock 0 ($x + ".sx");setAttr -lock 0 ($x + ".sy");setAttr -lock 0 ($x + ".sz");
+		catchQuiet (`makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1`);
+	}
+
+	select -cl; select "jntArmUpLf";
+	makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+	string $mirrorList[] = `listRelatives -c -type "joint" "grpMechArmGuide" `;
+	for ($x in $mirrorList){
+		if($x != "jntBody"){
+			select -cl; select $x;
+			mirrorJoint -mirrorYZ -mirrorBehavior -searchReplace "Lf" "Rt";
+		}
+	}
+
+	if(`objExists "ctlBodyGimbal"` == 0){
+		tempCtls;
+	}
+
+	autoMechArm "jntArmUpLf" "Lf"   $makePipe  $makeCover;
+	autoMechArm "jntArmUpRt" "Rt"   $makePipe  $makeCover;
+	// scaleRig;
+	tidyArm;
+
+	print ("\n\n DONE! \n\n");
+
+
+}
+
+
+global proc aMA_fkScale(string $upperJnt,string $lowerjnt,  string $settingsShape){
+
+	string $fkUpperName = `substitute "jnt" $upperJnt "jntFk" `;
+	string $fkLowerName = `substitute "jnt" $lowerjnt "jntFk" `;
+	string $ikUpperName = `substitute "jnt" $upperJnt "jntIk" `;
+	string $ikLowerName = `substitute "jnt" $lowerjnt "jntIk" `;
+
+	duplicate -n $fkUpperName $upperJnt;
+	duplicate -n $ikUpperName $upperJnt;
+	duplicate -n $fkLowerName $lowerjnt;
+	duplicate -n $ikLowerName $lowerjnt;
+
+	string $pFkUpName = `substitute "End" $fkUpperName "" `;
+	string $pFkLoName = `substitute "End" $fkLowerName "" `;
+	string $pIkUpName = `substitute "End" $ikUpperName "" `;
+	string $pIkLoName = `substitute "End" $ikLowerName "" `;
+
+	parent $fkUpperName $pFkUpName;
+	parent $fkLowerName $pFkLoName;
+	parent $ikUpperName $pIkUpName;
+	parent $ikLowerName $pIkLoName;
+
+	connectAttr -f ($settingsShape + ".upperLength") ($pIkUpName + ".scaleY");
+	connectAttr -f ($settingsShape + ".lowerLength") ($pIkLoName + ".scaleY");
+
+	string $pc[] = `parentConstraint -mo $ikUpperName $fkUpperName $upperJnt `;
+	connect2SettingsShape $settingsShape $pc[0] $ikUpperName $fkUpperName;
+
+	$pc = `parentConstraint -mo $ikLowerName $fkLowerName $lowerjnt `;
+	connect2SettingsShape $settingsShape $pc[0] $ikLowerName $fkLowerName;
+
+
+}
+
+global proc tidyArm(){
+
+	string $toDnt[] = {"ArmSettingsRt", "grpOffsetikHandleHand_jntIkArmEndRt", "locDisctlIkArmUpRt", "locDisctlIkArmLoRt", "locDisctlGimbalIkHandRt", "grpOffsetjntOutIkArmLoRt","grpOffsetjntOutIkArmUpRt", "locPosStart_jntArmLoRt", "locPosEnd_jntHandRt", "ArmSettingsLf", "grpOffsetikHandleHand_jntIkArmEndLf", "locDisctlIkArmUpLf", "locDisctlIkArmLoLf", "locDisctlGimbalIkHandLf", "grpOffsetjntOutIkArmLoLf","grpOffsetjntOutIkArmUpLf", "locPosStart_jntArmLoLf", "locPosEnd_jntHandLf", "locHandAimLf", "locHandAimRt"};
+	string $toPlacement[] = {"grpIkHandRt","locOffsetIkArmLoRt","grpArmLoPvRt", "grpIkHandLf","locOffsetIkArmLoLf","grpArmLoPvLf" };
+	string $toBody[] = {"grpFkArmUpRt", "grpIkArmUpRt","grpArmLoCover03Rt", "grpHandCover02Rt", "grpHandPipe02Rt",  "grpOffsetHandHoldersRt" , "grpArmBallRt", "grpFkArmUpLf", "grpIkArmUpLf","grpArmLoCover03Lf", "grpHandCover02Lf", "grpHandPipe02Lf",  "grpOffsetHandHoldersLf" , "grpArmBallLf","grpThumbLf", "grpThumbRt", "grpFingerLf", "grpFingerRt"};
+
+	string $ArmBd = `group -em -n "grpArmsCtls" `;
+	string $ArmDnt = `group -em -n "grpArmsMisc" `;
+	string $ArmPlmt = `group -em -n "grpArmsIkCtls" `;
+
+	for($each in $toDnt){
+		if(`objExists $each`){
+			parent $each $ArmDnt;
+		}
+	}
+	for($y in $toPlacement){
+		if(`objExists $y`){
+			parent $y $ArmPlmt;
+		}
+	}
+	for($z in $toBody){
+		if(`objExists $z`){
+			parent $z $ArmBd;
+		}
+	}	
+
+	parent $ArmDnt "grpDNT";
+	parent $ArmPlmt "ctlPlacementGimbal";
+	parent $ArmBd "ctlBodyGimbal";
+
+
+	if(`objExists "grpSkinJnts"`){
+		string $childJnt[] = `listRelatives -c -type "joint" "grpMechArmGuide" `;
+		parent $childJnt "grpSkinJnts";
+		
+	}else{
+		string $grpJnt = `rename "grpMechArmGuide" "grpSkinJnts"`;
+		parent $grpJnt "grpRig";
+	}
+	catchQuiet(`connectAttr -f "ctlPlacement.jointsVisibility" "grpSkinJnts.v"`);
+
+
+}
+
+
+
+global proc handCover(string $handJnt, string $armLoJnt, string $side){
+	string $cover1 = `substitute $side $handJnt ("Cover01" + $side) `;
+	string $cover2 = `substitute $side $handJnt ("Cover02" + $side) `;	
+	duplicate -po -name $cover1 $handJnt;
+	duplicate -po -name $cover2 $handJnt;
+	parent $cover2 $cover1;
+	if(`objExists ("jntArmLoEnd" + $side)`){
+		parent $cover1 ("jntArmLoEnd" + $side);
+	}
+
+	string $handCoverCtlName = `creCtrl $cover2 "parent" 1 "" "" "tweaker"`;
+	string $offsetGrp02 = `group -n ("grpOffset02_"+ $handCoverCtlName) $handCoverCtlName`;
+	string $offsetGrp = `group -n ("grpOffset01_"+ $handCoverCtlName) $offsetGrp02`;
+	string $grpN = `substitute "ctl" $handCoverCtlName "grp" `;
+	parentConstraint -mo -w 1 $cover1 $grpN;
+
+	string $pos01[] = `spaceLocator -n ("locPosStart_" + $armLoJnt) -p 0 0 0`;
+	pointConstraint -w 1 $armLoJnt $pos01[0];
+
+	string $pos02[] = `spaceLocator -n ("locPosEnd_" + $handJnt) -p 0 0 0`;
+	pointConstraint -w 1 $handJnt $pos02[0];
+
+	string $disB = `shadingNode -n ("db_" + $armLoJnt + "_" + $handJnt) -asUtility distanceBetween`;
+	connectAttr -force ($pos01[0] + "Shape.worldPosition[0]") ($disB + ".point1");
+	connectAttr -force ($pos02[0] + "Shape.worldPosition[0]") ($disB + ".point2");
+	
+	string $settingsShape = "ArmSettings" + $side + "Shape";
+	if(`objExists $settingsShape `){
+		string $noArmS = `shadingNode -n ("md_Normalize_armScale_" + $armLoJnt + "_" + $handJnt) -asUtility multiplyDivide`;
+		setAttr ($noArmS + ".operation") 2;
+		connectAttr -f ($disB + ".distance") ($noArmS + ".input1X");
+		connectAttr -f ($settingsShape + ".lowerLength") ($noArmS + ".input2X");
+
+		string $setRange = `shadingNode -n ("sr_" + $armLoJnt + "_" + $handJnt) -asUtility setRange`;
+		connectAttr -f ($noArmS + ".outputX") ($setRange + ".valueX");
+		connectAttr -f ($noArmS + ".outputX") ($setRange + ".valueY");
+
+		setAttr ($setRange + ".oldMinX") `getAttr ($disB + ".distance")`;
+		setAttr ($setRange + ".oldMaxY") `getAttr ($disB + ".distance")`;
+
+		setAttr ($setRange + ".oldMaxX") 25;
+		setAttr ($setRange + ".oldMinY") 11;
+		setAttr ($setRange + ".maxX") 2;
+		setAttr ($setRange + ".minY") -2.5;
+
+		string $neg = `shadingNode -n ("mdNeg_"+ $armLoJnt + "_" + $handJnt) -asUtility multiplyDivide`;
+		setAttr ($neg + ".input2Z") -1;
+		setAttr ($neg + ".input2X") -1;
+		setAttr ($neg + ".input2Y") -1;
+		connectAttr -f ($setRange + ".outValueX") ($neg + ".input1X");
+		connectAttr -f ($setRange + ".outValueY") ($neg + ".input1Y");
+
+		string $plus = `shadingNode  -n ("pma_outTY_"+ $armLoJnt + "_" + $handJnt) -asUtility plusMinusAverage`;
+		
+		connectAttr -f ($neg + ".outputX") ($plus + ".input1D[0]");	
+		connectAttr -f ($neg + ".outputY") ($plus + ".input1D[1]");	
+
+		connectAttr -f ($plus + ".output1D") ($offsetGrp + ".ty");	
+				
+	}
+
+}
+
+
+global proc handCoverCounter(string $interpolatorBS){
+	if(`gmatch $interpolatorBS "*Lf"`){
+		autoHandCoverCounter "grpOffset02_ctlHandCover02Lf" $interpolatorBS;
+	}else{
+		autoHandCoverCounter "grpOffset02_ctlHandCover02Rt" $interpolatorBS;	
+	}
+	
+}
+
+global proc autoHandCoverCounter(string $offsetHandCover, string $interpolatorBS ){
+	string $wg0 = `createNode -n ("sdk_wg0_" + $offsetHandCover) "animCurveUU"`;
+	string $wg1 = `createNode -n ("sdk_wg1_" + $offsetHandCover) "animCurveUU"`;
+	string $wg2 = `createNode -n ("sdk_wg2_" + $offsetHandCover) "animCurveUU"`;
+	string $wg3 = `createNode -n ("sdk_wg3_" + $offsetHandCover) "animCurveUU"`;
+	
+	string $blend = `createNode -n ("bW_" + $offsetHandCover) "blendWeighted" `;
+	setAttr ($blend + ".current") 3;	
+
+	connectAttr -f ($wg0 + ".output") ($blend + ".input[0]");
+	connectAttr -f ($wg1 + ".output") ($blend + ".input[1]");
+	connectAttr -f ($wg2 + ".output") ($blend + ".input[2]");
+	connectAttr -f ($wg3 + ".output") ($blend + ".input[3]");
+
+	setKeyframe -f 0  -v 0  $wg0 ;
+	setKeyframe -f 1  -v 2.2  $wg0 ;
+	setKeyframe -f 0  -v 0  $wg1 ;
+	setKeyframe -f 1  -v 2.2  $wg1 ;
+	setKeyframe -f 0  -v 0  $wg2 ;
+	setKeyframe -f 1  -v 2.2  $wg2 ;
+	setKeyframe -f 0  -v 0  $wg3 ;
+	setKeyframe -f 1  -v 2.2  $wg3 ;
+
+	string $weight[] = `listAttr -m ($interpolatorBS + ".w")`;
+	connectAttr -f ($interpolatorBS + "." + $weight[0] ) ($wg0 + ".input");
+	connectAttr -f ($interpolatorBS + "." + $weight[1] ) ($wg1 + ".input");
+	connectAttr -f ($interpolatorBS + "." + $weight[2] ) ($wg2 + ".input");
+	connectAttr -f ($interpolatorBS + "." + $weight[3] ) ($wg3 + ".input");
+
+	keyTangent   -ott linear -itt linear $wg0 ;
+	keyTangent   -ott linear -itt linear $wg1 ;
+	keyTangent   -ott linear -itt linear $wg2 ;
+	keyTangent   -ott linear -itt linear $wg3 ;
+
+	string $parentHandOffset[] = `listRelatives -p $offsetHandCover`;
+	string $pmaNode = `connectionInfo -sfd ($parentHandOffset[0] + ".ty")`;
+	
+	string $counterTy = `createNode -n ("counterTy_" + $offsetHandCover) "animCurveUU"`;
+	setKeyframe -f -0.55  -v 1  $counterTy ;
+	setKeyframe -f 0  -v 0  $counterTy ;
+	setKeyframe -f 1.73  -v 1  $counterTy ;	
+
+	keyTangent   -ott linear -itt linear $counterTy ;
+	keyTangent   -ott linear -itt linear $counterTy ;
+
+	string $con = ` shadingNode -n ("bC_" + $offsetHandCover) -asUtility blendColors`;
+	setAttr ($con +".color1R") 0;
+
+	connectAttr -f $pmaNode ($counterTy + ".input");
+	connectAttr -f ($counterTy + ".output") ($con + ".blender");
+	connectAttr -f ($blend + ".output") ($con + ".color2R");
+	connectAttr -f ($con + ".outputR") ($offsetHandCover + ".ty");
+
+
+}

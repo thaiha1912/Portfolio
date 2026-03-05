@@ -1,0 +1,16 @@
+global proc copySW(){
+	string $listGeo[] = `ls -ap -sl`;
+	for ($each in $listGeo){
+		string $sJnts[] = `skinCluster -q- inf $each`;
+		print $sJnts;
+		if( `size $sJnts` == 2 && $sJnts[0] == "jntUpperBody" && $sJnts[1] == "jntLowerBody"){
+			print ("\n\nIN:  "+ $each);
+			select -cl; select "tempSkin" $each;
+			CopySkinWeights;
+
+		}else{
+			print ("\n\nOUT:  "+ $each);
+		}
+	}
+	
+}

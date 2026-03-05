@@ -1,0 +1,73 @@
+/*
+Script:     autoReScale
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Handle scaling constraints for rigged skeleton
+
+Usage:
+	1. Run scaleRig
+	2. Select grpSkinJnts and run reScaleConst
+*/
+
+global proc reScaleConst(){
+	if(`objExists "grpSkinJnts"`){
+		select "grpSkinJnts";
+		string $scaleConstList[] = `listRelatives -ad -pa -type "scaleConstraint" `;
+		for ($x in $scaleConstList ){
+			string $ip = `connectionInfo -sfd ( $x + ".target[0].targetScale")`;
+			string $op[] = `connectionInfo -dfs ( $x + ".constraintScaleX")`;
+			$ip = `match "[^\.]*" $ip`;
+			$op[0] = `match "[^\.]*" $op[0]`;
+			print ("\n\n Day la x: "+ $x +" \n\n Day la IP: " + $ip + "\n\n Day la OP: " + $op[0]);
+			delete $x;
+			catchQuiet (`scaleConstraint -n ("sC_" + $ip + "_" + $op[0]) $ip $op[0]`);
+			print "\n\n________________________________\n\n";
+		}
+	}else{
+		print "\n\n NONE SELECTED! \n\n";
+	}
+
+}
+
+global proc scaleRig(){ 
+// normalize cho distance between
+	string $listdb[] = `ls -type "distanceBetween"`;
+	for($tgt in $listdb){
+		string $desa[] = `connectionInfo -dfs ($tgt + ".distance")`;
+		string $nor = `shadingNode -n ("md_Normalize_" + $tgt) -asUtility multiplyDivide`;
+		setAttr ($nor  + ".operation") 2;
+		string $mtxNode = `shadingNode -n "dm_PlacementScale" -asUtility decomposeMatrix`;
+		connectAttr -force ctlPlacementGimbal.worldMatrix[0]  ($mtxNode + ".inputMatrix");
+		connectAttr -f ($mtxNode + ".outputScale") ($nor + ".input2");
+		connectAttr -f ($tgt + ".distance") ($nor + ".input1X");
+		for ($each in  $desa){
+			connectAttr -f ($nor + ".outputX") $each;
+		}
+	}
+}
+
+
+global proc dummy(){
+	updateRotOrder;
+	cleanLocAllScene;
+	cleanCb;
+
+	string $k[] = `ls-sl`;
+	for($x in $k){
+	   ctlColorCode $x "direct";    
+		string $shape[] = `listRelatives -s $x`;
+		connectAttr -f "ctlPlacement.bodyTweaksControlsVisibility" ($shape[0] + ".v");
+		connectAttr -f "ctlPlacement.bodyMainControlsVisibility" ($shape[0] + ".v");
+		setAttr -keyable false -channelBox false ($x + ".v");
+			setAttr ($x + ".drawStyle") 2;
+
+		sets -rm "setControlsBodyMain";
+		sets -rm "setControlsBodyTweaks";
+		sets -n "setControlsBody";
+		sets -n "setControls";
+		sets -n "setRenderGeo";
+
+		setAttr ( $x + ".overrideEnabled") 1;
+		connectAttr -f ctlPlacement.geometryDisplay ($x + ".overrideDisplayType");
+	}
+}
+

@@ -1,0 +1,10 @@
+global proc autoSlot(string $parentEndJnt){
+	select -cl;
+	string $slotJnt = `substitute "End" $parentEndJnt "Slot"`;
+	$slotJnt = `joint -n $slotJnt -p 0 0 0`;
+	parentConstraint -n "conToDel" $parentEndJnt $slotJnt;
+	delete "conToDel";
+	parent $slotJnt $parentEndJnt;
+	string $ctlName[] = `hn_creCtrl $slotJnt 1 "parent" 1 "" "" "direct"`;
+	parentConstraint $parentEndJnt $ctlName[2];
+}

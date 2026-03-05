@@ -1,0 +1,42 @@
+/*
+Script:     autoPartsRig
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Automated rigging for mechanical parts including door handles
+*/
+
+global proc partsRig(){
+	string $selectedJnts[]  = `ls -sl`;
+	for ($each in $selectedJnts ){
+		if(`gmatch $each "*Handle*"` == 0){
+			if(`gmatch $each "*Door*"` ){
+				ikDoorHandle $each;
+			}else{
+				hn_creFkChainCtl $each "parent";
+			}
+		}
+	}
+ 
+}
+
+// De rig cho nhung canh cua cua mech - input la mot chain xuong gom 2 xuong - root va door handle
+// Phai co them 1 xuong rieng lam tay nam cua , dat ten theo quy tac $input + "Handle01"
+global proc ikDoorHandle(string $input){
+	string $childJnts[] = `listRelatives -typ "joint" -ad $input`;
+	setAttr ($childJnts[0] +  ".jointOrient" ) 0 0 0;
+	select -cl;
+	select $input $childJnts[0];
+	string $solverName[] = `ikHandle -n ("ikHandleDoor" + $input) -sol "ikSCsolver" $input $childJnts[0]`;
+	string $ikCtl[] = `hn_creCtrl $solverName[0] 1 "parent" 0 "IkDoorHandle" "" "ik"`;
+	parent $solverName[0] $ikCtl[0];
+	string $ikRootCtl[] = `hn_creCtrl $input 1 "parent" 0 "DoorPivot" "" "fk"`;
+	parent $input $ikRootCtl[0];
+
+	string $doorHandleJnt =  $input + "Handle01" ;
+	string $dhCtl[] = `hn_creCtrl $doorHandleJnt 1 "parent" 0 "" "" "ik"`;
+	parent $ikCtl[2] $dhCtl[0]; 
+
+	parent $dhCtl[2] $ikRootCtl[0];
+	delete $doorHandleJnt;
+	
+	setAttr ( $ikCtl[2] + ".v") 0;
+}

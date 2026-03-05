@@ -1,0 +1,146 @@
+//  script nay tao controller va gan color code cho ctls
+
+/*
+Script:     hn_creCtrl
+Author:     Thai Ha Trieu (Hannah Trieu)
+Date:       1.8.2022
+
+//requsiteFunctions: 
+	
+//inputs
+
+	int $cutPrefix: 1 - will cut first 3 letters
+	string $constraintType: parent or point 
+	int $constaintJnt: 1 - will constraint the input after finish create ctl
+	string $prefix: add prefix - duh
+	string $switch: add locator shape which have settings in it
+	string $color: type of the controller will have difference color
+
+//-purpose
+	
+//-how To:
+	hn_creCtrl string $input , int $cutPrefix , string $constraintType, int $constaintJnt , string $prefix, string $switch, string $color
+	
+
+	return ctl name, offsetGrp name, Grp name
+	
+//-what script does:
+	Create controller for input object
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+
+
+
+proc ctlColorCode( string $x , string $ctlType){
+	float $ctlColorCode[];
+	if($ctlType == "ik" || $ctlType == "pelvis" ){
+		$ctlColorCode = {0.101961, 0.337255, 0.094118};
+	}
+
+	if($ctlType == "fk"){
+		$ctlColorCode = {0.254902, 0.286275, 0.686275};
+	}
+	if($ctlType == "footIk"){
+		$ctlColorCode = {0.109677, 0.362776, 0.10124};
+	}
+	if($ctlType == "gimbal" || $ctlType == "bodyGimbal"  ){
+		$ctlColorCode = {0.282353, 0.627451, 0.254902};
+	}
+
+	if($ctlType == "mid"){
+		$ctlColorCode = {0.141176, 0.572549, 0.584314};
+	}
+	if($ctlType == "placement" || $ctlType == "orient" || $ctlType == "body" || $ctlType == "placementGimbal"){
+		$ctlColorCode = {0.65098, 0.443137, 0.294118};
+	}
+
+	if($ctlType == "tweaker"){
+		$ctlColorCode = {0.141176, 0.572549 , 0.584314};
+	}
+
+	if($ctlType == "ribbon" || $ctlType == "direct" ){
+		$ctlColorCode = { 0.568627 , 0.34902 , 0.564706 };
+	}
+
+	if($ctlType == "eye"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}
+	if($ctlType == "yellowCtl"){
+		$ctlColorCode = { 1 , 1 , 0 };
+	}
+	if($ctlType == "eyeMaster"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}	
+
+// color code
+
+	setAttr ( $x + ".ovrgbf") yes;
+    setAttr ($x + ".ove") yes;
+    string $shape[] = `listRelatives -s $x`;
+    // set color
+    // Wire Color RGB
+	setAttr ($x + ".ovrgb") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2] ;
+    setAttr ($shape[0] + ".wfcc") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2];
+    // Use Object Color
+    setAttr ($shape[0] + ".uoc") 2;
+}
+
+
+
+global proc string[] hn_creCtrl(string $input , int $cutPrefix , string $constraintType, int $constaintJnt , string $prefix, string $switch, string $color){
+	string $name = `substitute "|" $input ""`;
+	if ($cutPrefix == 1){
+		$name = `substitute "..." $input ""`;
+		
+	}else{
+		$name = "_" + $name;
+	}
+    
+    string $loc[] = `spaceLocator -n ("grp" + $prefix + $name) -p 0 0 0`;
+	string $locOffset[] = `spaceLocator -n ("grpOffset" + $prefix + $name) -p 0 0 0`;
+	parent $locOffset[0] $loc[0];
+
+    string $ctrl = "";
+	if(`gmatch $prefix  "*Gimbal*"` ||`gmatch $input  "*Gimbal*"` ){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 -5.765563986 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	}else if( `gmatch $input  "*Pv*"` ||`gmatch $prefix  "*Pv*"`){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -2.856095997 0 0 -p 2.856095997 0 0 -p 0 0 0 -p 0 0 -2.856095997 -p 0 0 2.856095997 -p 0 0 0 -p 0 2.856095997 0 -p 0 -2.856095997 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 `;
+	}else if( `gmatch $input  "*Direct*"` ||`gmatch $prefix  "*Direct*"`){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -2 0 -1 -p 2 0 -1 -p 2 0 1 -p -2 0 1 -p -2 0 -1 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	}else{
+		$ctrl = `curve -n ("ctl" + $prefix + $name )    -d 3 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -p -9.070460289 -2.951531847e-15 -8.092550702e-16 -p -6.413783976 -3.344262848e-15 6.413783976 -p 1.089753318e-14 -3.506937355e-15 9.070460289 -p 6.413783976 -3.344262848e-15 6.413783976 -p 9.070460289 -2.951531847e-15 8.978946595e-16 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -k -2 -k -1 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 `;
+	}
+
+	if($switch != ""){
+		parent -r -s -add $switch $ctrl;
+
+	}
+	if ($constraintType == "parent"){
+		parentConstraint -n "toDel" -w 1 $input $loc[0];
+		parentConstraint -n "toDel2" -w 1 $input $ctrl;
+	}else{
+		if ($constraintType == "point"){
+		pointConstraint -n "toDel" -w 1 $input $loc[0];
+		pointConstraint -n "toDel2" -w 1 $input $ctrl;
+		}
+	}
+	
+	catchQuiet (`delete "toDel" "toDel2"`);
+    parent $ctrl $locOffset[0];
+	
+	if($constaintJnt == 1){
+		parentConstraint $ctrl $input;
+		scaleConstraint $ctrl $input;
+	}else if($constaintJnt == 2){
+		parent $input $ctrl;
+	}
+
+	ctlColorCode $ctrl $color;
+	return {$ctrl, $locOffset[0] ,$loc[0]};
+
+}

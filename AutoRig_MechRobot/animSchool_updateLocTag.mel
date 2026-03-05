@@ -1,0 +1,91 @@
+/*
+Script:     animSchool_updateLocTag
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Update animation locator tags and prepare geometry for FBX export
+*/
+
+global proc add3Loc(){
+	string $locList[] = {"tagCamera"," tagSync"," tagMissile"};
+	for ($x in $locList){
+		select -cl;
+		string $creLoc[] = `spaceLocator -n $x -p 0 0 0`;
+		setAttr ($creLoc[0] + ".localScaleZ") 0.1;
+		setAttr ($creLoc[0] + ".localScaleX") 0.1;
+		setAttr ($creLoc[0] + ".localScaleY") 0.1;
+		parent $creLoc[0] "jntRoot";
+	}
+}
+
+global proc fbxSel(string  $nameSpace){
+	string $rootName = $nameSpace + ":jntRoot";
+	string $geoName = $nameSpace + ":grpGeoAnimExport";
+	
+	string $jntExp[] = {};
+	string $jntList[] = `listRelatives -ad -f  $rootName`;
+	for($i in $jntList){
+		if(`gmatch $i "*onstraint*"` != 1){
+			$jntExp[`size $jntExp`] = $i;
+		}
+	}
+
+
+	string $locList[] = `listRelatives -ad -f -type "locator" $rootName`;
+	string $locExp[] = {};
+	for ($x in $locList){
+		if(`gmatch $x "*tag*"` == 1){
+			string $transNode[] = `listRelatives -p -type "transform" $x`;
+			$locExp[`size $locExp`] = $transNode[0];
+		}
+	}
+
+	string $meshShape[] = `listRelatives -ad -f -type "mesh" $geoName`;
+	string $meshExp[] = {};
+	for ($y in $meshShape){
+		string $transNode[] = `listRelatives -p -type "transform" $y`;
+		if(`getAttr ($transNode[0] + ".v")` == 1){
+			$meshExp[`size $meshExp`] = $transNode[0];
+		}
+	}
+
+	print $locExp;
+
+	select -r $jntExp;
+	select -add $rootName;
+	select -add $locExp;
+	select -add $meshExp;
+
+}
+
+
+global proc jntSel(string  $nameSpace){
+	string $rootName = $nameSpace + ":jntRoot";
+
+	string $jntExp[] = {};
+	string $jntList[] = `listRelatives -ad -f  $rootName`;
+	for($i in $jntList){
+		if(`gmatch $i "*onstraint*"` != 1){
+			$jntExp[`size $jntExp`] = $i;
+		}
+	}	
+	
+	select -r $jntExp;
+	select -add $rootName;
+
+}
+
+global proc meshSel(string  $nameSpace){
+	string $geoName = $nameSpace + ":grpGeoAnimExport";
+
+	string $meshShape[] = `listRelatives -ad -f -type "mesh" $geoName`;
+	string $meshExp[] = {};
+	for ($y in $meshShape){
+		string $transNode[] = `listRelatives -p -type "transform" $y`;
+		if(`getAttr ($transNode[0] + ".v")` == 1){
+			$meshExp[`size $meshExp`] = $transNode[0];
+		}
+	}
+
+	select -r $meshExp;
+
+}
+

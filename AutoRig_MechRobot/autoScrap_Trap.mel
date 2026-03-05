@@ -1,0 +1,96 @@
+//  select CVs cua crv scrap truoc
+global proc autoStrap(){
+	string $CVs[] = `ls -sl -fl`;
+	string $toEvalAim = "";
+	string $cvJnt[] = {};
+	string $crvName = `match "^[^\.]*" $CVs[0]`;
+	string $shape[] = `listRelatives -s $crvName`;
+	string $crvInfo = `shadingNode -n ("cI_" +  $crvName) -asUtility curveInfo`;
+	string $locTgtGrp = `group -em -n ("grpLocAimUpTgt_"+ $crvName)`;
+	setAttr ($locTgtGrp + ".v" ) 0;
+	string $skinJntGrp = `group -em -n ("grpSkinJnts_" + $crvName) `;
+	connectAttr -f  ($shape[0] + ".worldSpace[0]") ( $crvInfo + ".inputCurve");
+
+	for ($each = 0; $each < `size $CVs`; $each ++){
+		select -cl; 
+		string $newJntName = `substitute "crv" $crvName "jnt"`;
+		string $currentJntName = $newJntName + $each;
+		string $nextJntName = $newJntName + ($each + 1);
+		string $jointName = ` joint -n $currentJntName -p 0 0 0`;
+		connectAttr -f ($crvInfo + ".controlPoints["+ $each +"]") ( $jointName + ".translate");
+
+		$cvJnt[`size $cvJnt`] = $jointName;
+		string $loc[] = `spaceLocator -n ("locAimUpTgt_" + $jointName )`;
+		parent $loc[0] $jointName;
+		setAttr ($loc[0] + ".t") 0 0 0;
+		setAttr ($loc[0] + ".r") 0 0 0;
+		setAttr ($loc[0] + ".tx") 10;
+		parent $loc[0] $locTgtGrp;
+		pointConstraint -mo $jointName $loc[0];
+
+		parent $currentJntName $skinJntGrp;
+
+		if(($each + 1) < `size $CVs`){
+			$toEvalAim = $toEvalAim + "\n select -cl; select " + $currentJntName + "  " + $nextJntName +  "; \n aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 1 0 -upVector 1 0 0 -worldUpType \"object\" -worldUpObject  " + $loc[0] + ";\n";
+		}
+	}
+	eval $toEvalAim;
+	select -cl ; select $cvJnt; delete `listRelatives -c -type "aimConstraint"`; 
+	makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+	eval $toEvalAim;
+	driverCrv $crvName;
+	print "\nDONE!!\n";
+
+}
+
+
+global proc driverCrv (string $crvName){
+
+	string $simCrv[] = `duplicate -n ($crvName + "_driver") $crvName`;
+	catchQuiet (`rebuildCurve -ch 1 -rpo 1 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s 4 -d 3 -tol 0.01 $simCrv[0]`);
+	string $crvInfo = `shadingNode -n ("cI_" +  $simCrv[0]) -asUtility curveInfo`;
+	string $shape[] = `listRelatives -s $simCrv[0]`;
+	connectAttr -f  ($shape[0] + ".worldSpace[0]") ( $crvInfo + ".inputCurve");
+	string $nPC  = `createNode -n ("nPc_"+ $crvName) "nearestPointOnCurve"`;
+	connectAttr -f  ($shape[0] + ".worldSpace[0]") ( $nPC + ".inputCurve");
+	string $cvJnt[] = {};
+	string $grpSkinJnt = `group -em -n ("grpDrvJnt_" + $crvName)`;
+	setAttr ($grpSkinJnt + ".v") 0;
+
+	string $toEvalAim = "";
+
+	for ($each = 0; $each <= 6; $each ++){
+		select -cl; 
+		string $newJntName = `substitute "crv" $crvName "jntDrv_"`;
+		string $currentJntName = $newJntName + $each;
+		string $nextJntName = $newJntName + ($each + 1);
+		string $jointName = ` joint -n $currentJntName -p 0 0 0`;
+		float $inValue[] = `getAttr ($crvInfo + ".controlPoints["+ $each +"]") `;
+		setAttr ( $nPC + ".inPosition") $inValue[0] $inValue[1] $inValue[2];
+		connectAttr -f ( $nPC + ".position") ($jointName + ".translate");
+		disconnectAttr ( $nPC + ".position") ($jointName + ".translate");
+
+		$cvJnt[`size $cvJnt`] = $jointName;
+		parent $jointName $grpSkinJnt;
+
+		if(($each + 1) <= 6){
+			$toEvalAim = $toEvalAim + "\n select -cl; select " + $currentJntName + "  " + $nextJntName +  "; \n aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 1 0 -upVector 1 0 0 -worldUpType \"vector\" -worldUpVector 1 0 0;\n";
+		}
+
+	}
+
+	eval $toEvalAim;
+	select -cl ; select $cvJnt; DeleteConstraints; makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+	for ($x in $cvJnt){
+		hn_creCtrl $x 1 "parent" 1 "Gimbal" ""  "ribbon";
+	}
+	
+	delete $crvInfo $nPC;
+	select -cl ; select $cvJnt $simCrv[0];
+	SmoothBindSkin;
+
+	wire -n ("wire_" + $crvName ) -gw false -en 1.000000 -ce 0.000000 -li 0.000000 -w $simCrv[0] $crvName;
+
+}
+

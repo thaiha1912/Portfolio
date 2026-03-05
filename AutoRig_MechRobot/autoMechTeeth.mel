@@ -1,0 +1,366 @@
+
+/*
+Script:     autoMechTeeth
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Automated mechanical teeth rigging with materials and texture support
+
+Execution Order:
+	The order to run this script:
+		select joints with proper naming
+		run creToothCtl => controllers for those joints now created - skin them to corresponding meshes
+		run generalTeethMaterial => created phong materials for the front teeth. Now assign them to corresponding meshes    
+		run autoMechLetters => to run this proc, you have to find U and V coordinates for each letter in the alphabet in mesh's UV
+		run locLetterRand => create an attribute to randomize the tooth when it rotated. Find the rotationX limit value first
+		run mechTeethRsTexture => create another teeth group with RS mat. To run this proc, you need to creat a RS base mat first for the whole teeth.
+*/
+
+
+global proc generalTeethMaterial(string $mechName,int $finCount, string $baseMaterial, string $fontPath){
+	for ($each = 0; $each <= $finCount; $each ++){
+		int  $numC = 1 + $each;
+		string $blinnNode = `shadingNode -n ( $mechName + "Tooth0" + $numC ) -asShader phong`;
+		sets -renderable true -noSurfaceShader true -empty -name ($blinnNode + "SG");
+		connectAttr -f ( $blinnNode + ".outColor") ($blinnNode + "SG.surfaceShader");
+
+		string $layerdNode = `shadingNode -n ($blinnNode + "_layeredTexture") -asTexture layeredTexture`;
+
+		connectAttr -f ($layerdNode + ".outColor") ( $blinnNode + ".color");
+		setAttr ( $layerdNode +  ".inputs[0].blendMode") 1;
+
+		string $baseColor = `connectionInfo -sfd ( $baseMaterial + ".color")`;
+		$baseColor = `match "^[^\.]*" $baseColor`;
+		string $bump = `connectionInfo -sfd ( $baseMaterial + ".normalCamera")`;
+		$bump = `match "^[^\.]*" $bump`;
+
+		connectAttr -f ($baseColor + ".outColor") ($layerdNode + ".inputs[0].color");
+		if( $bump != ""){
+			connectAttr -f ($bump + ".outNormal") ($blinnNode + ".normalCamera");
+		}
+		
+		string $file = `shadingNode -name ($blinnNode + "_file") -asTexture -isColorManaged file`;
+		string $alpha = `shadingNode -n ($blinnNode + "_alpha")  -asUtility place2dTexture`;
+		setAttr ($file + ".fileTextureName") -type "string" $fontPath ;
+
+		connectAttr -f  ($alpha + ".coverage") ( $file + ".coverage");
+		connectAttr -f  ($alpha + ".translateFrame") ( $file + ".translateFrame");
+		connectAttr -f  ($alpha + ".rotateFrame") ( $file + ".rotateFrame");
+		connectAttr -f  ($alpha + ".mirrorU") ( $file + ".mirrorU");
+		connectAttr -f  ($alpha + ".mirrorV") ( $file + ".mirrorV");
+		connectAttr -f  ($alpha + ".stagger") ( $file + ".stagger");
+		connectAttr -f  ($alpha + ".wrapU") ( $file + ".wrapU");
+		connectAttr -f  ($alpha + ".wrapV") ( $file + ".wrapV");
+		connectAttr -f  ($alpha + ".repeatUV") ( $file + ".repeatUV");
+		connectAttr -f  ($alpha + ".offset") ( $file + ".offset");
+		connectAttr -f  ($alpha + ".rotateUV") ( $file + ".rotateUV");
+		connectAttr -f  ($alpha + ".noiseUV") ( $file + ".noiseUV");
+		connectAttr -f  ($alpha + ".vertexUvOne") ( $file + ".vertexUvOne");
+		connectAttr -f  ($alpha + ".vertexUvTwo") ( $file + ".vertexUvTwo");
+		connectAttr -f  ($alpha + ".vertexUvThree") ( $file + ".vertexUvThree");
+		connectAttr -f  ($alpha + ".vertexCameraOne") ( $file + ".vertexCameraOne");
+		connectAttr  ($alpha + ".outUV") ( $file + ".uv");
+		connectAttr  ($alpha + ".outUvFilterSize") ( $file + ".uvFilterSize");
+
+		connectAttr -f ($file + ".outAlpha") ($layerdNode + ".inputs[0].alpha");
+
+	}
+
+}
+
+
+global proc locLetterRand(int $stop,float $limitRotValue){
+
+	string $locOp[] = {};
+	string $rNode = "";
+
+	if(`objExists "randRotate"` == 0){
+		$rNode = `createNode -n "randRotate" "expression"`;
+	}
+	if(`objExists "locLettersRandomOutput"` == 0){
+		$locOp = `spaceLocator -n "locLettersRandomOutput" -p 0 0 0 `;
+	}
+	string $theExpression = "";
+	for($x = 0 ; $x <= $stop; $x ++){
+		int $y = 1 + $x;
+		string $ctlName = "ctlTooth0" +  $y;
+
+		string $dmNode = `shadingNode -n ("dm_" + $ctlName + "_rx") -asUtility decomposeMatrix`;
+		connectAttr -f  ($ctlName + ".matrix") ($dmNode + ".inputMatrix");
+		addAttr -ln ("letter" + $x ) -keyable true -at long  -dv 0 $locOp[0];
+
+		addAttr -ln "randomLetter" -keyable true -at "enum" -dv 0 -en "off:on:" $ctlName ;
+
+		string $con = `shadingNode -n ("conRandLetter" + $x ) -asUtility condition`;
+		setAttr ($con + ".secondTerm") 1;
+
+		connectAttr -f ($ctlName + ".randomLetter") ($con + ".firstTerm");
+		connectAttr -f ( $ctlName + ".letters") ( $con + ".colorIfFalseR");
+		connectAttr -f ($locOp[0] + ".letter" + $x ) ($con + ".colorIfTrueR");
+
+		connectAttr -f ($con + ".outColorR") ($ctlName +  "_choiceV.selector");
+		connectAttr -f ($con + ".outColorR") ($ctlName +  "_choiceU.selector");
+		$theExpression = $theExpression + "if("+ $dmNode +".outputRotateX<=-" + $limitRotValue + " || " + $limitRotValue + " <= "+ $dmNode +".outputRotateX )\n    locLettersRandomOutput.letter" + $x + " = rand(44);\n\n\n";
+	}
+
+	expression -e -s $theExpression -o "" -ae 1 -uc all  randRotate;
+
+
+
+}
+
+
+global proc execMech_Letters(string $ctrl, string $textureName , float $row[], float $col[], float $coverU,float $coverV,float $rotateFrame){
+	string $letters[] = {"A", "B", "C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","1","2","3","4","5","6","7","8","9","0","$",".","+","=", "*", "/", "-", "!", "?", "None"};
+	addAttr -ln "letters" -at "enum" -en "A:B:C:D:E:F:G:H:I:J:K:L:M:N:O:P:Q:R:S:T:U:V:W:X:Y:Z:1:2:3:4:5:6:7:8:9:0:$:.:+:=:*:/:-:!:?:None:" -dv 45 -keyable true $ctrl ;
+	addAttr -ln "offsetU" -k 1 -at double   -dv 0 $ctrl;
+	addAttr -ln "offsetV" -k 1 -at double  -dv 0 $ctrl;
+
+	setAttr ($textureName + ".coverageU") $coverU;
+	setAttr ($textureName + ".coverageV") $coverV;
+	setAttr ($textureName + ".rotateFrame") $rotateFrame;	
+
+
+
+	string $choiceU = `shadingNode -asUtility -name ( $ctrl + "_choiceU") choice`;
+	string $choiceV = `shadingNode -asUtility -name ( $ctrl + "_choiceV") choice`;
+
+	string $correctFloatU = `shadingNode -asUtility -name ( $ctrl + "_floatCorrectU") floatCorrect`;
+	string $correctFloatV = `shadingNode -asUtility -name ( $ctrl + "_floatCorrectV") floatCorrect`;
+
+	connectAttr -f ($ctrl + ".letters") ($choiceU + ".selector");
+	connectAttr -f ($ctrl + ".letters") ($choiceV + ".selector");
+
+	connectAttr -f ( $choiceU + ".output") ($correctFloatU +".gain");
+	connectAttr -f ($correctFloatU + ".outFloat") ( $textureName + ".offsetU");
+
+	connectAttr -f ( $choiceV + ".output") ($correctFloatV +".gain");
+	connectAttr -f ($correctFloatV + ".outFloat") ( $textureName + ".offsetV");
+
+	for($x = 0; $x < `size $letters`; $x ++){
+		string $uvVL = `shadingNode -asUtility -name ( $ctrl + "_uvValueLetter_" + $letters[$x]) floatMath`;
+		string $offsetUV = `shadingNode -asUtility -name ( $ctrl + "_offsetUV_" + $letters[$x]) plusMinusAverage`;
+
+		connectAttr -f ($ctrl + ".offsetU") ( $offsetUV + ".input2D[0].input2Dx");
+		connectAttr -f ($ctrl + ".offsetV") ( $offsetUV + ".input2D[0].input2Dy");
+// 
+
+		if ($x < 18){
+			setAttr ($offsetUV + ".input2D[1].input2Dx") $row[0];
+		}else{
+			if ($x < 26 ){
+				setAttr ($offsetUV + ".input2D[1].input2Dx") $row[1];
+			}else{
+				if($x < 45){
+					setAttr ($offsetUV + ".input2D[1].input2Dx") $row[2];
+				}else{
+					setAttr ($offsetUV + ".input2D[1].input2Dx") $row[3];
+				}
+				
+			}
+		}
+
+		setAttr ($offsetUV + ".input2D[1].input2Dy") $col[$x];
+		connectAttr -f ($offsetUV + ".output2Dx") ($uvVL + ".floatB");
+		connectAttr -f ($offsetUV + ".output2Dy") ($uvVL + ".floatA");
+
+		connectAttr -f ($uvVL + ".floatA") ($choiceU + ".input[" + $x + "]");
+		connectAttr -f ($uvVL + ".floatB") ($choiceV + ".input[" + $x + "]");
+
+	}
+
+}
+
+global proc autoMechLetters(string $mechName, int $ctlCount , float $row[], float $col[], float $coverU,float $coverV,float $rotateFrame){
+	for($x = 0; $x <= $ctlCount; $x++){
+		string $ctlName = "ctlTooth0" + ($x + 1);
+		string $alphaTextureName = $mechName + "Tooth0" + ($x + 1) + "_alpha";
+		execMech_Letters $ctlName $alphaTextureName $row $col $coverU $coverV $rotateFrame;
+	}
+	print "\n\nFINISH autoMechLetters \n\n";
+}
+
+global proc creToothCtl(){
+	string $listSel[] = `ls -sl -typ "joint"`;
+
+	for($jnts in $listSel){
+		string $jntChild[] = `listRelatives -ad -type joint $jnts`;
+		$jntChild[`size $jntChild`] = $jnts;
+
+		for ($x in $jntChild){
+			string $name  = `creCtrl $x "parent" 1 "" "" "direct"`;
+			scaleConstraint $name $x;
+		}
+
+		for ($each in $jntChild){
+			string $parentJnt[] = `listRelatives -p -type "joint" $each`;
+			if(`size $parentJnt` != 0){
+				string $pCtlName = `substitute "jnt" $parentJnt[0] "ctl"`;
+				string $cGrpName = `substitute "jnt" $each "grp"`;
+				parent $cGrpName $pCtlName;
+			}
+		}
+	}
+
+}
+
+
+global proc ctlColorCode( string $x , string $ctlType){
+	float $ctlColorCode[];
+	if($ctlType == "ik" || $ctlType == "pelvis" ){
+		$ctlColorCode = {0.101961, 0.337255, 0.094118};
+	}
+
+	if($ctlType == "fk"){
+		$ctlColorCode = {0.254902, 0.286275, 0.686275};
+	}
+	if($ctlType == "footIk"){
+		$ctlColorCode = {0.109677, 0.362776, 0.10124};
+	}
+	if($ctlType == "gimbalIk" || $ctlType == "bodyGimbal"  ){
+		$ctlColorCode = {0.282353, 0.627451, 0.254902};
+	}
+
+	if($ctlType == "mid"){
+		$ctlColorCode = {0.141176, 0.572549, 0.584314};
+	}
+	if($ctlType == "placement" || $ctlType == "orient" || $ctlType == "body" || $ctlType == "placementGimbal"){
+		$ctlColorCode = {0.65098, 0.443137, 0.294118};
+	}
+
+	if($ctlType == "tweaker"){
+		$ctlColorCode = {0.141176, 0.572549 , 0.584314};
+	}
+
+	if($ctlType == "ribbon" || $ctlType == "direct" ){
+		$ctlColorCode = { 0.568627 , 0.34902 , 0.564706 };
+	}
+
+	if($ctlType == "eye"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}
+	if($ctlType == "yellowCtl"){
+		$ctlColorCode = { 1 , 1 , 0 };
+	}
+	if($ctlType == "eyeMaster"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}	
+
+// color code
+
+	setAttr ( $x + ".ovrgbf") yes;
+    setAttr ($x + ".ove") yes;
+    string $shape[] = `listRelatives -s $x`;
+    // set color
+    // Wire Color RGB
+	setAttr ($x + ".ovrgb") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2] ;
+    setAttr ($shape[0] + ".wfcc") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2];
+    // Use Object Color
+    setAttr ($shape[0] + ".uoc") 2;
+}
+
+
+
+global proc string creCtrl(string $y , string $constraintType, int $constaintJnt , string $prefix, string $switch, string $color){
+    string $name = `substitute "jnt" $y ""`;
+    string $loc[] = `spaceLocator -n ("grp" + $prefix + $name) -p 0 0 0`;
+	string $locOffset[] = `spaceLocator -n ("grpOffset" + $prefix + $name) -p 0 0 0`;
+	parent $locOffset[0] $loc[0];
+
+    string $ctrl = "";
+	if(`gmatch $prefix  "*Gimbal*"` ||`gmatch $y  "*Gimbal*"` ){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 -5.765563986 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	}else if( `gmatch $y  "*Pv*"`){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -2.856095997 0 0 -p 2.856095997 0 0 -p 0 0 0 -p 0 0 -2.856095997 -p 0 0 2.856095997 -p 0 0 0 -p 0 2.856095997 0 -p 0 -2.856095997 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 `;
+	}else{
+		$ctrl = `curve -n ("ctl" + $prefix + $name )    -d 3 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -p -9.070460289 -2.951531847e-15 -8.092550702e-16 -p -6.413783976 -3.344262848e-15 6.413783976 -p 1.089753318e-14 -3.506937355e-15 9.070460289 -p 6.413783976 -3.344262848e-15 6.413783976 -p 9.070460289 -2.951531847e-15 8.978946595e-16 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -k -2 -k -1 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 `;
+	}
+
+	if($switch != ""){
+		parent -r -s -add $switch $ctrl;
+
+	}
+	if ($constraintType == "parent"){
+		parentConstraint -n "toDel" -w 1 $y $loc[0];
+		parentConstraint -n "toDel2" -w 1 $y $ctrl;
+	}else{
+		if ($constraintType == "point"){
+		pointConstraint -n "toDel" -w 1 $y $loc[0];
+		pointConstraint -n "toDel2" -w 1 $y $ctrl;
+		}
+	}
+	
+	delete "toDel" "toDel2";
+    parent $ctrl $locOffset[0];
+	
+	if($constaintJnt == 1){
+		parentConstraint $ctrl $y;
+		scaleConstraint $ctrl $y;
+	}
+	ctlColorCode $ctrl $color;
+	return $ctrl;
+
+}
+
+
+// can phai co texture teeth blinn da, dem stop bat dau tu 0
+global proc mechTeethRsTexture( string $teethGeoGrp, int $stop, string $mechName, string $baseRsNode){
+	
+	string $letters[] = {"A", "B", "C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"};
+	// need to change everytime
+	string $charPrefix = $mechName + "Tooth0";
+	
+	string $rsTeethGrp[] = `duplicate -n ($teethGeoGrp + "_rsMat") $teethGeoGrp `;		
+	string $oriJntChild[] = `listRelatives -f $teethGeoGrp`;
+	string $dupJntChild[] = `listRelatives -f $rsTeethGrp[0]`;
+	for ($x = 0; $x <`size $oriJntChild`; $x ++){
+		print  $oriJntChild[$x];
+		print "\n\n";
+		string $sJnt[] = `skinCluster -q- inf $oriJntChild[$x]`;
+		select -cl; select $sJnt $dupJntChild[$x];
+		SmoothBindSkin;
+ 
+	}
+
+	for ($each = 0; $each <= $stop; $each ++){
+		string $oldMatName = $charPrefix + ($each + 1);		
+		string $rxNd  = `shadingNode -n ("rsMaterial_" + $oldMatName ) -asShader RedshiftMaterial`;
+		sets -renderable true -noSurfaceShader true -empty -name ($rxNd + "SG");
+		connectAttr -f ($rxNd + ".outColor") ($rxNd + "SG.surfaceShader");
+
+		//  connect manually RS texture to new geos--
+
+
+		// REDSHIFT reconnect texture in Maya
+		string $oldLayerMat = `connectionInfo -sfd ($oldMatName + ".color")`;
+		$oldLayerMat = `match "[^.]*" $oldLayerMat`;
+		print ("\n____"+ $oldLayerMat +"_____\n");
+		string $baseColor = `connectionInfo -sfd ($oldLayerMat + ".inputs[0].color")`;
+		string $alphaColor = `connectionInfo -sfd ($oldLayerMat + ".inputs[0].alpha")`;
+		$alphaColor = `match "[^.]*" $alphaColor`;
+
+		string $rsLayer = `shadingNode -n ("rsColorLayer_" + $oldMatName ) -asUtility RedshiftColorLayer`;
+		
+		connectAttr -f ($rsLayer + ".outColor") ($rxNd  + ".diffuse_color");
+
+		connectAttr -f $baseColor ($rsLayer + ".base_color");
+
+		connectAttr -f ($alphaColor + ".outColor") ($rsLayer + ".layer1_color");
+		setAttr ($rsLayer + ".layer1_blend_mode") 4;
+
+
+		setAttr ($rxNd + ".refl_fresnel_mode") 2;
+
+		string $metalNode = `connectionInfo -sfd ( $baseRsNode + ".refl_metalness")`;
+		string $roughnessNode = `connectionInfo -sfd ($baseRsNode + ".refl_roughness")`;
+		string $bumpNode = `connectionInfo -sfd ($baseRsNode + ".bump_input")`;
+		
+		connectAttr -f $metalNode ($rxNd + ".refl_metalness");
+		connectAttr -f $bumpNode ($rxNd + ".bump_input");
+		connectAttr -f $roughnessNode  ($rxNd + ".refl_roughness");
+
+	}
+	
+
+	rename $teethGeoGrp ($teethGeoGrp + "_proxy");
+	print "\nDONE\n";
+}
+

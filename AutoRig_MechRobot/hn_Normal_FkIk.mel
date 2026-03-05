@@ -1,0 +1,215 @@
+/*
+Script:     hn_Normal_FkIk
+Author:     Thai Ha Trieu (Hannah Trieu)
+Date:       1.8.2022
+
+//requsiteFunctions: 
+	hn_creCtrl
+//inputs
+
+
+//-purpose
+	
+//-how To:
+
+//-what script does:
+	Create a basic setup for Ik Fk rig
+//-bugs 
+
+
+//-future improvements
+
+*/
+
+
+// tao control FK binh thuong
+
+proc creFkCtrl(string $jnts, string $switch){
+    string $jntChild[] = `listRelatives -ad -type joint $jnts`;
+	$jntChild[`size $jntChild`] = $jnts;
+
+	string $rootFkGroup = "";
+    for ($x in $jntChild){
+		$x = `substitute "|" $x ""`;
+        string $ctlName[] = `hn_creCtrl $x 1 "parent" 0 "" $switch "fk"`;
+		string $ctlGimbalName[] = `hn_creCtrl $x 1 "parent" 1 "Gimbal" $switch "gimbal"`;
+		
+		parent $ctlGimbalName[2] $ctlName[0];	
+		if ($x == $jnts){
+			$rootFkGroup = $ctlName[2];
+		}
+    }
+
+	setDrivenKeyframe   -dv 1 -v 0 -cd ($switch + ".ik") ($rootFkGroup + ".v" ) ;
+	setDrivenKeyframe   -dv 0 -v 1 -cd ($switch + ".ik") ($rootFkGroup + ".v" ) ;	
+
+	for ($each in $jntChild){
+		string $parentJnt[] = `listRelatives -p -type "joint" $each`;
+		if(`size $parentJnt` != 0){		
+
+			string $pCtlName = `substitute "jnt" $parentJnt[0] "ctlGimbal"`;
+			string $driverGrp = `group -em -n ("driver_" + $pCtlName ) `;
+			parentConstraint -n "del" $pCtlName $driverGrp;
+			parent $driverGrp $pCtlName;
+ 			string $cGrpName = `substitute "jnt" $each "grp"`;
+			string $inverseJnt = `substitute "grp" $cGrpName "jntInverse"`;
+			joint -n $inverseJnt -p 0 0 0; parent -w $inverseJnt;
+			parentConstraint -n "del" $cGrpName $inverseJnt; delete `ls "del"`;
+			parent $cGrpName $inverseJnt;	
+			string $decMtx = `shadingNode -n ("dm_scale_" + $cGrpName ) -asUtility decomposeMatrix`;
+			connectAttr -f ($driverGrp + ".worldMatrix[0]")  ($decMtx + ".inputMatrix");
+			connectAttr -f ($decMtx + ".outputScale") ($inverseJnt + ".inverseScale");
+			parent $inverseJnt $driverGrp;
+
+			if(`gmatch $driverGrp "*Upper*"`){
+				connectAttr -f ($switch  + ".upperLength") ($driverGrp + ".scaleX");
+			}
+			else if(`gmatch $driverGrp "*Lower*"`){
+				connectAttr -f ($switch  + ".lowerLength") ($driverGrp + ".scaleX");
+			}
+		}
+	}
+
+}
+
+
+// tao IK rotate plane solver binh thuong cho normal IK. Ikhandle point constraint vao footGimbal ctl
+proc normalIk(string $ikChain, string $switch, string $side, string $scaleAxis){
+	string $childJnts[] = `listRelatives -ad -type "joint" $ikChain`;
+	select -cl;
+	select  $ikChain $childJnts[0];
+	string $footIk[] = `ikHandle -n ("ikH"+ $ikChain) -sol ikRPsolver`;
+	string $ikCtl[] =  `hn_creCtrl $footIk[0] 1 "parent" 0 "" $switch "ik"`;
+	string $ikGimbalCtl[] =  `hn_creCtrl $footIk[0] 1 "parent" 0 "Gimbal" $switch "gimbal"`;
+	string $offsetIkHandle[] =  `hn_creCtrl $footIk[0] 1 "parent" 2 "OffsetIk" $switch "direct"`;
+	string $offsetIkJntsChain[] =  `hn_creCtrl $ikChain 1 "point" 2 "" $switch "ik"`;
+
+	setAttr ($offsetIkHandle[2]  + ".v" ) 0;
+
+	parent $ikGimbalCtl[2] $ikCtl[0];
+	pointConstraint $ikGimbalCtl[0] $offsetIkHandle[0];
+
+	string $poleGrp = `group -em -n ("grpPoleVec_" + $ikChain) `;
+	hn_pythonFindPoleVec $ikChain $childJnts[1] $childJnts[0] $poleGrp;
+	string $pvCtl[] =  `hn_creCtrl $poleGrp 1 "parent" 0 "Pv" $switch "gimbal"`;
+	parent $poleGrp $pvCtl[0];
+	poleVectorConstraint $poleGrp $footIk[0];
+
+	string $db_U2Pv = `shadingNode -n ("db_U2Pv" + $ikChain) -asUtility distanceBetween`;
+	string $db_L2Pv = `shadingNode -n ("db_L2Pv" + $ikChain) -asUtility distanceBetween`;
+
+	connectAttr -force ( $offsetIkJntsChain[0] + ".worldMatrix[0]") ($db_U2Pv + ".inMatrix1");
+	connectAttr -force ($poleGrp + ".worldMatrix[0]") ( $db_U2Pv + ".inMatrix2");
+
+	connectAttr -force ( $ikGimbalCtl[0] + ".worldMatrix[0]") ( $db_L2Pv + ".inMatrix1");
+	connectAttr -force ($poleGrp + ".worldMatrix[0]") ( $db_L2Pv + ".inMatrix2");
+
+	string $md_U2Pv = `shadingNode -n ("md_U2Pv" + $ikChain ) -asUtility multiplyDivide`;
+	string $md_L2Pv = `shadingNode -n ("md_L2Pv" + $ikChain ) -asUtility multiplyDivide`;
+	
+	float $tY = `getAttr ($childJnts[1] + ".t" + $scaleAxis)`;
+	float $absTY = abs($tY);
+
+	connectAttr -f ($db_U2Pv + ".distance") ($md_U2Pv + ".input1X");
+	setAttr ($md_U2Pv + ".input2X") $absTY;
+	setAttr ($md_U2Pv + ".operation") 2;
+ 
+	$tY = `getAttr ($childJnts[0] + ".t" + $scaleAxis)`;
+	$absTY = abs($tY);
+
+ 	connectAttr -f ($db_L2Pv + ".distance") ($md_L2Pv + ".input1X");
+	setAttr ($md_L2Pv + ".input2X") $absTY;
+	setAttr ($md_L2Pv + ".operation") 2;
+
+	string $con = `shadingNode -n ("blendLength_" + $ikChain ) -asUtility blendColors`;
+	connectAttr -f ($switch + ".pinToPv") ($con + ".blender");
+
+	connectAttr -f ($switch + ".upperLength") ($con + ".color2R");
+	connectAttr -f ($switch + ".lowerLength") ($con + ".color2G");
+	connectAttr -f ($md_U2Pv + ".outputX") ($con + ".color1R");
+	connectAttr -f ($md_L2Pv + ".outputX") ($con + ".color1G");	
+
+
+	connectAttr -f ($con + ".outputR") ($ikChain + ".s" + $scaleAxis);
+	connectAttr -f ($con + ".outputG") ($childJnts[1] + ".s"+ $scaleAxis );
+
+	connectAttr -f ($switch + ".ik") ( $ikCtl[2] + ".v");
+	connectAttr -f ($switch + ".ik") ( $offsetIkJntsChain[2] + ".v");
+	connectAttr -f ($switch + ".ik") ( $pvCtl[2] + ".v");
+
+}
+
+proc connect2SettingsShape(string $settingsSh, string $constraintName, string $parentIk, string $parentFk){
+	connectAttr -f ($settingsSh + ".ik") ($constraintName + "." + $parentIk + "W0") ;
+	setDrivenKeyframe   -dv 1 -v 0 -cd ($settingsSh + ".ik") ($constraintName + "." + $parentFk + "W1") ;
+	setDrivenKeyframe   -dv 0 -v 1 -cd ($settingsSh + ".ik") ($constraintName + "." + $parentFk + "W1") ;
+	keyTangent -index 0 -inTangentType linear -outTangentType linear ($constraintName + "_" + $parentFk + "W1") ;
+	keyTangent -index 1 -inTangentType linear -outTangentType linear ($constraintName + "_" + $parentFk + "W1") ;
+
+}
+
+
+proc exec_Normal_FkIk(string $originalChain, string $part, string $side ){
+
+	// tao leg switch ik fk
+	string $locSwitch[] = `spaceLocator -n ($part + "Settings" + $side ) -p 0 0 0`;
+	string $locSwitchShape[] = `listRelatives -s $locSwitch[0]`;
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpz");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsz");
+	addAttr -ln "ik"  -at long  -min 0 -max 1 -dv 1 -keyable true $locSwitchShape[0];
+	addAttr -ln "upperLength"  -at double  -dv 1 -keyable true $locSwitchShape[0];
+	addAttr -ln "lowerLength"  -at double  -dv 1 -keyable true $locSwitchShape[0];
+	addAttr -ln "pinToPv"  -at double  -dv 0 -min 0 -max 1 -keyable true $locSwitchShape[0];
+
+	// tao Fk joint chain
+	string $dupFk[] = `duplicate -rr -n "Fk" $originalChain`;
+	string $fkJnt = `hn_renameJntChain $originalChain $dupFk[0] "Fk"`;
+	
+	// tao ctl fk
+	creFkCtrl $fkJnt $locSwitchShape[0];
+	
+	// // tao Ik joint chain
+	string $dupIk[] = `duplicate -rr -n "Ik" $originalChain`;
+	string $ikJnt = `hn_renameJntChain $originalChain $dupIk[0] "Ik"`;
+
+	// tao normal Ik
+	$ikJnt = `substitute "|" $ikJnt ""`;
+	string $norIk[] = `normalIk $ikJnt $locSwitchShape[0] $side "x" `;
+
+	// constraint joint
+	string $oriC[] = `listRelatives -ad -type "joint" $originalChain `;
+	$oriC[`size $oriC`] = $originalChain;
+
+	string $fkChild[] = `listRelatives -ad -type "joint" $fkJnt	 `;
+	$fkChild[`size $fkChild`] = $fkJnt;
+
+	string $ikChild[] = `listRelatives -ad -type "joint" $ikJnt	 `;
+	$ikChild[`size $ikChild`] = $ikJnt;
+
+	for($x = 0; $x < `size $oriC`; $x ++){
+		string $pC[] = `parentConstraint -n ("pC_" + $oriC[$x]) $ikChild[$x] $fkChild[$x] $oriC[$x] `;
+		connect2SettingsShape $locSwitchShape[0] $pC[0] $ikChild[$x] $fkChild[$x] ;
+	}
+}
+
+global proc hn_Normal_FkIk(string $originalChainLf , string $part){
+	string $mir[] = `mirrorJoint -mirrorYZ -mirrorBehavior -searchReplace "Lf" "Rt" $originalChainLf`;
+	exec_Normal_FkIk  $originalChainLf $part "Lf";
+	exec_Normal_FkIk  $mir[0] $part "Rt";
+
+
+}
+
+// string $sel[] = `ls -sl`;
+// for ($x in $sel){
+// 	catchQuiet(`setAttr  ($x + ".overrideEnabled") 0`);
+// 	string $shape[] = ` listRelatives -s $x`;
+// 	for ($y in $shape){
+// 		catchQuiet(`setAttr  ($y + ".overrideEnabled") 0`);
+// 	}
+  
+// }

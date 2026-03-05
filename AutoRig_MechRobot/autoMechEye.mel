@@ -1,0 +1,173 @@
+/*
+Script:     autoMechEye
+Author:     Thai Ha Trieu (Hannah Trieu)
+Purpose:    Automated eye rigging with aim and look controls
+*/
+
+global proc autoEye(string $locEyePos){
+	string $locSwitch[] = `spaceLocator -n ("EyeSettings") -p 0 0 0`;
+	string $locSwitchShape[] = `listRelatives -s $locSwitch[0]`;
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lpz");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsx");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsy");
+	setAttr -keyable false -channelBox false ($locSwitchShape[0] + ".lsz");
+	addAttr -ln "eyeAim"  -at double  -min 0 -max 1 -dv 1 -keyable true $locSwitchShape[0];
+
+	float $posEye[] = `xform -q -ws -t $locEyePos`;
+	string $locEyeUp[] = `duplicate  -rr -n ( "EyeUpTarget" ) $locEyePos`;
+	string $locEyeAim[] = `duplicate  -rr -n ( "EyeAimTarget" ) $locEyePos`;
+	string $locEyeMainCtl[] = `duplicate  -rr -n ( "locMainEye" ) $locEyePos`;
+	string $locEyeCtlTgt[] = `duplicate  -rr -n ( "locEyeTgt" ) $locEyePos`;
+
+	parent $locEyeUp[0] $locEyeAim[0] $locEyeMainCtl[0] $locEyePos;
+	setAttr ($locEyeUp[0] + ".ty" ) 20;
+	setAttr ($locEyeAim[0] + ".tz" ) 20;
+	setAttr ($locEyeMainCtl[0] + ".tz" ) 10;
+	parent -w  $locEyeUp[0] $locEyeAim[0] $locEyeMainCtl[0];
+
+	string $ctlEye = ` creCtrl $locEyeCtlTgt[0] "parent" 0 "" $locSwitchShape[0] "tweaker"`;
+	parent $locEyeCtlTgt[0] $ctlEye;
+	string $grpEye = `substitute "ctl" $ctlEye "grp"`;
+	setAttr ($grpEye + ".v") 0;
+
+	string $ctlEyeAim = ` creCtrl $locEyeAim[0] "parent" 0 "" $locSwitchShape[0] "placement"`;
+	parent $locEyeAim[0] $ctlEyeAim;
+	string $grpEyeAim = `substitute "ctl" $ctlEyeAim "grp"`;
+
+	string $ctlMainEye = ` creCtrl $locEyeMainCtl[0] "parent" 0 "" $locSwitchShape[0] "eye"`;
+	parent $locEyeMainCtl[0] $ctlMainEye;
+	string $grpEyeMain = `substitute "ctl" $ctlMainEye "grp"`;	
+
+	string $locOutputEyeAim[] = `duplicate  -rr -n ( "locOpEyeAim" ) $locEyePos`;
+	string $locOffsetOutputEyeAim[] = `duplicate  -rr -n ( "locOffsetOpEyeAim" ) $locEyePos`;
+	parent $locOutputEyeAim[0] $locOffsetOutputEyeAim[0];
+
+	string $locOutputEyeMain[] = `duplicate  -rr -n ( "locOpEyeMain" ) $locEyePos`;
+	string $locOffsetOutputEyeMain[] = `duplicate  -rr -n ( "locOffsetOpEyeMain" ) $locEyePos`;
+	parent $locOutputEyeMain[0] $locOffsetOutputEyeMain[0];
+
+
+	aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 0 1 -upVector 0 1 0 -worldUpType "object" -worldUpObject $locEyeUp[0]  $locEyeAim[0] $locOutputEyeAim[0];
+	string $pCName[] = `parentConstraint -mo -w 1 $locEyeCtlTgt[0]  $locOutputEyeAim[0] $locOffsetOutputEyeMain[0]`;
+	connectAttr -f ($ctlEye + ".r") ($locOutputEyeMain[0] + ".r");
+
+	string $revNode = `shadingNode -n "rv_eyeAim" -asUtility reverse`;
+	connectAttr -f ($locSwitchShape[0] + ".eyeAim") ($revNode + ".inputX");
+	connectAttr -f ($revNode + ".outputX") ( $pCName[0] + "." + $locEyeCtlTgt[0] + "W0");
+	connectAttr -f ($locSwitchShape[0] + ".eyeAim") ( $pCName[0] + "." + $locOutputEyeAim[0] + "W1");	
+
+	string $eyeJnt = `joint -n "jntEye" -p $posEye[0] $posEye[1] $posEye[2]`;
+	parentConstraint -w 1 $locOutputEyeMain[0] $eyeJnt;
+	scaleConstraint -w 1 $ctlEye $eyeJnt;
+
+	aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 0 1 -upVector 0 1 0 -worldUpType "object" -worldUpObject $locEyeUp[0]  $ctlMainEye $ctlEye;
+
+	parent  $locEyeUp[0]  $locOffsetOutputEyeMain[0]  $locOffsetOutputEyeAim[0] $grpEye $grpEyeAim $grpEyeMain $locEyePos;
+
+	string $outerEye[] = `polySphere -n "geoProxyEye1" -r 1 -sx 20 -sy 20 -ax 0 0 1 -cuv 2 -ch 1`;
+	string $innerEye[] = `polySphere -n "geoProxyEye2" -r 0.5 -sx 20 -sy 20 -ax 0 0 1 -cuv 2 -ch 1`;
+	parent $innerEye[0] $outerEye[0];
+	setAttr ($outerEye[0] + ".scaleZ") 0.3;
+	setAttr ($outerEye[0] + ".t") $posEye[0] $posEye[1] ($posEye[2] + 1 );
+
+	rename $locEyePos "grpEye";
+
+}
+
+
+global proc string creCtrl(string $y , string $constraintType, int $constaintJnt , string $prefix, string $switch, string $color){
+    string $name = `substitute "jnt" $y ""`;
+    string $loc[] = `spaceLocator -n ("grp" + $prefix + $name) -p 0 0 0`;
+	string $locOffset[] = `spaceLocator -n ("grpOffset" + $prefix + $name) -p 0 0 0`;
+	parent $locOffset[0] $loc[0];
+
+    string $ctrl = "";
+	if(`gmatch $prefix  "*Gimbal*"` ||`gmatch $y  "*Gimbal*"` ){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 -5.765563986 -p 5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 5.765563986 -p -5.765563986 -2.079102075e-15 -5.765563986 -k 0 -k 1 -k 2 -k 3 -k 4 `;
+	}else if( `gmatch $y  "*Pv*"`){
+		$ctrl = `curve -n ("ctl" + $prefix + $name )  -d 1 -p -2.856095997 0 0 -p 2.856095997 0 0 -p 0 0 0 -p 0 0 -2.856095997 -p 0 0 2.856095997 -p 0 0 0 -p 0 2.856095997 0 -p 0 -2.856095997 0 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 `;
+	}else{
+		$ctrl = `curve -n ("ctl" + $prefix + $name )    -d 3 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -p -9.070460289 -2.951531847e-15 -8.092550702e-16 -p -6.413783976 -3.344262848e-15 6.413783976 -p 1.089753318e-14 -3.506937355e-15 9.070460289 -p 6.413783976 -3.344262848e-15 6.413783976 -p 9.070460289 -2.951531847e-15 8.978946595e-16 -p 6.413783976 -2.558800847e-15 -6.413783976 -p 1.23615329e-14 -2.39612634e-15 -9.070460289 -p -6.413783976 -2.558800847e-15 -6.413783976 -k -2 -k -1 -k 0 -k 1 -k 2 -k 3 -k 4 -k 5 -k 6 -k 7 -k 8 -k 9 -k 10 `;
+	}
+
+	if($switch != ""){
+		parent -r -s -add $switch $ctrl;
+
+	}
+	if ($constraintType == "parent"){
+		parentConstraint -n "toDel" -w 1 $y $loc[0];
+		parentConstraint -n "toDel2" -w 1 $y $ctrl;
+	}else{
+		if ($constraintType == "point"){
+		pointConstraint -n "toDel" -w 1 $y $loc[0];
+		pointConstraint -n "toDel2" -w 1 $y $ctrl;
+		}
+	}
+	
+	delete "toDel" "toDel2";
+    parent $ctrl $locOffset[0];
+	
+	if($constaintJnt == 1){
+		parentConstraint $ctrl $y;
+		scaleConstraint $ctrl $y;
+	}
+	ctlColorCode $ctrl $color;
+	return $ctrl;
+
+}
+
+global proc ctlColorCode( string $x , string $ctlType){
+	float $ctlColorCode[];
+	if($ctlType == "ik" || $ctlType == "pelvis" ){
+		$ctlColorCode = {0.101961, 0.337255, 0.094118};
+	}
+
+	if($ctlType == "fk"){
+		$ctlColorCode = {0.254902, 0.286275, 0.686275};
+	}
+	if($ctlType == "footIk"){
+		$ctlColorCode = {0.109677, 0.362776, 0.10124};
+	}
+	if($ctlType == "gimbalIk" || $ctlType == "bodyGimbal"  ){
+		$ctlColorCode = {0.282353, 0.627451, 0.254902};
+	}
+
+	if($ctlType == "mid"){
+		$ctlColorCode = {0.141176, 0.572549, 0.584314};
+	}
+	if($ctlType == "placement" || $ctlType == "orient" || $ctlType == "body" || $ctlType == "placementGimbal"){
+		$ctlColorCode = {0.65098, 0.443137, 0.294118};
+	}
+
+	if($ctlType == "tweaker"){
+		$ctlColorCode = {0.141176, 0.572549 , 0.584314};
+	}
+
+	if($ctlType == "ribbon" || $ctlType == "direct" ){
+		$ctlColorCode = { 0.568627 , 0.34902 , 0.564706 };
+	}
+
+	if($ctlType == "eye"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}
+	if($ctlType == "yellowCtl"){
+		$ctlColorCode = { 1 , 1 , 0 };
+	}
+	if($ctlType == "eyeMaster"){
+		$ctlColorCode = { 0 , 1 , 1 };
+	}	
+
+// color code
+
+	setAttr ( $x + ".ovrgbf") yes;
+    setAttr ($x + ".ove") yes;
+    string $shape[] = `listRelatives -s $x`;
+    // set color
+    // Wire Color RGB
+	setAttr ($x + ".ovrgb") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2] ;
+    setAttr ($shape[0] + ".wfcc") -type "float3" $ctlColorCode[0] $ctlColorCode[1] $ctlColorCode[2];
+    // Use Object Color
+    setAttr ($shape[0] + ".uoc") 2;
+}

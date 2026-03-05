@@ -1,0 +1,757 @@
+global int $rtgFileCount = 0;
+global int $frameCount = 0;
+global string $rtgFileList[] = {};
+global string $cName;
+
+global proc copAnim(string $charNamespace){
+	global int $frameCount;
+	currentTime -20;
+	string $child[] = `listRelatives -ad -type "transform" "root"`;
+	for ($x in $child){
+		catchQuiet (`parentConstraint -mo -n "toDel" ($charNamespace + "_" + $x) $x`);
+	}
+	$frameCount = size(`keyframe -query -tc ( $charNamespace + "_" + $child[0] + ".tx")`);
+	string $timeRange = "0:" + ($frameCount - 1);
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $child;
+	
+	string $del[] = `ls "toDel" ($charNamespace + "*")`;
+	delete $del;
+
+	$frameCount = $frameCount - 2;
+	
+}
+
+global proc rtgRawAnim(string $charName, string $listAnim[]){
+	global int $frameCount;
+	global int $rtgFileCount;
+	global string $rtgFileList[];
+	global string $cName;
+	$cName = $charName;
+
+	string $baseSke =  "H:/0_WORK/0_UpWork/0_Neureal/"+ $charName +"/assets/baseSke_4RawRTG.ma";
+	
+	for ($x in $listAnim){
+		string $fbxSrc = "H:/0_WORK/0_UpWork/0_Neureal/" + $charName + "/assets/FBX/" + $x + ".fbx";
+		file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o $baseSke;
+		file -import -type "FBX"  -ignoreVersion -ra true -mergeNamespacesOnClash false -options "fbx" -rpr $x -importFrameRate true -pr -importTimeRange "combine" $fbxSrc;
+	
+		renameSourceFBX($x);
+		
+		copAnim $x;
+
+		string $outputFileName = ("H:/0_WORK/0_UpWork/0_Neureal/"+$charName+"/assets/RawAnim/"+$x+".ma");
+		addItemToList( $outputFileName);
+		file -rename $outputFileName;
+		file -f -save  -options "v=0;";
+	}
+	
+	rtg2Char_step1 ;
+}
+
+global proc rtg2Char_step1(){ 
+	global int $frameCount;
+	global int $rtgFileCount;
+	global string $rtgFileList[];
+	global string $cName;
+
+	if ($rtgFileCount < (`size $rtgFileList`)){
+		file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o ("H:/0_WORK/0_UpWork/0_Neureal/" + $cName + "/assets/Rig/" + $cName + ".ma");
+		file -import -type "mayaAscii"  -ignoreVersion -ra true -mergeNamespacesOnClash false -namespace "rtgStep1" -options "v=0;p=17;f=0"  -pr  -importTimeRange "combine" $rtgFileList[$rtgFileCount];
+		$frameCount = size(`keyframe -query -tc "rtgStep1:pelvis.tx"`) - 2;
+		confirmBox_step1;
+		playbackOptions -min 0 -max $frameCount ;
+		playbackOptions -aet $frameCount;
+
+	}else{
+
+		window -title "Notification" -widthHeight 100 100 noti;
+		columnLayout -adjustableColumn true;
+		text -label "\n\nDONE";
+		showWindow noti;
+		}
+}
+
+
+global proc rtg2Char_step2(){ //change hip jnt pos
+
+	global int $frameCount;
+	global int $rtgFileCount;
+	global string $rtgFileList[];
+
+	playbackOptions -min 0 -max $frameCount ;
+	playbackOptions -aet $frameCount;
+
+	currentTime 0 ;
+	string $root = "Root";
+	string $rootChild[] = `listRelatives -c -type "transform" $root`;
+	string $rootAllChild[] = `listRelatives -ad  -type "joint" $root`;
+
+	string $groupName = `group -em -name "dummy"`; 
+
+	pointConstraint -n "toDel" "Left_Cube33" $groupName; delete "toDel";
+
+	string $worldName = `group -em -name "dummyWorld"`; 
+	parent $worldName $groupName;
+
+	string $hipDummy = `group -em -name "dummyHip"`; 
+	parent $hipDummy $worldName;
+	parentConstraint -n "toDel" $rootChild[0] $hipDummy;
+	bakeResults -simulation true -t ("0:" + $frameCount) -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $hipDummy;
+	delete "toDel";
+
+	parentConstraint -n "toDel" $hipDummy $rootChild[0];
+
+	setAttr ( $groupName + ".ty")  -13 ;
+	
+	bakeResults -simulation true -t ("0:" + $frameCount) -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $rootChild[0];
+
+	// print ("\n\n\n-----------------LOWER IT-----------------\n\n\n");
+
+	delete "toDel";
+	delete $groupName;
+
+	if ($rtgFileCount < (`size $rtgFileList`)){
+		confirmBox_step2;
+	}else{
+		// print "\n\n OUT \n\n";
+	}
+
+}
+
+global proc rtg2Char_step3(){
+	global int $frameCount;
+	global int $rtgFileCount;
+	global string $rtgFileList[];
+	global string $cName;
+	
+	string $root = "Root";
+	string $hip = "Character1_Hips";
+	string $footLf = "Left_Cube33";
+
+	currentTime $frameCount;
+
+	float $position[] = `xform -q -ws -t $hip`;
+	float $rotation[] = `xform -q -ws -ro $hip`;
+
+	file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o ("H:/0_WORK/0_UpWork/0_Neureal/" + $cName + "/assets/ildePose.ma");
+	string $allChild[] = `listRelatives -ad -pa $root`;
+
+	currentTime 10;
+
+	string $groupName = `group -em -name "dummyHip"`; 
+	
+
+	pointConstraint -n "toDel" $hip $groupName; delete "toDel";
+	select -cl;
+
+	parentConstraint -n "toDel" -mo $groupName $hip;
+	
+	setAttr ($groupName + ".tx") $position[0] ;
+	setAttr ($groupName + ".tz") $position[2] ;
+
+
+	setKeyframe $allChild;
+	delete (`ls "toDel*"`) ; 
+	delete $groupName;
+
+	currentTime 20;
+	setKeyframe $allChild;
+
+	select -cl; select $allChild;
+	string $char = `character -name "dummyChar" -excludeVisibility -excludeScale`;
+	clip -name ("idlePose" + $rtgFileCount) -sc 1 -allAbsolute -animCurveRange $char;
+
+	string $outputFileName = `substitute RawAnim $rtgFileList[$rtgFileCount] "IdleAnimClip"`;
+	file -rename $outputFileName;
+	file -f -save  -options "v=0;";
+
+	$rtgFileCount = $rtgFileCount + 1;
+	rtg2Char_step1;
+
+}
+
+global proc onOKPressed_step1() {
+    // print "\nOK button pressed1.\n";
+    deleteUI -window myWindow_step1;
+	rtg2Char_step2;
+	// print "Continuing code execution...\n";
+}
+
+global proc onCancelPressed_step1() {
+    // print "Cancel button pressed. Closing window.\n";
+    deleteUI -window myWindow_step1;
+}
+
+global proc confirmBox_step1(){
+	if (`window -exists myWindow_step1`) {
+		deleteUI myWindow_step1;  
+	}
+	window -title "Step 1: Confirmation Window" -widthHeight 300 100 myWindow_step1;
+	formLayout myForm;
+	text -label ">Change the source \n>Bake to Skeleton\n>Hit OK to run Step 2" -align "center" myTextLabel;
+
+	button -label "OK" -w 200 -command "onOKPressed_step1" myOKButton_1;
+	button -label "Cancel" -w 50 -command "onCancelPressed_step1" myCancelButton_1;
+	formLayout -edit
+		-attachForm myOKButton_1 "left" 10
+		-attachForm myOKButton_1 "bottom" 10
+		-attachNone myOKButton_1 "right"
+		-attachNone myOKButton_1 "top"
+		
+		-attachForm myCancelButton_1 "right" 10
+		-attachForm myCancelButton_1 "bottom" 10
+		-attachNone myCancelButton_1 "left"
+		-attachNone myCancelButton_1 "top"
+	myForm;
+
+	showWindow myWindow_step1;
+}
+
+
+global proc onOKPressed_step2() {
+	global int $rtgFileCount;
+	global int $frameCount;
+	global string $rtgFileList[];
+
+	delete `ls "rtgStep1:*"`;
+
+	string $metaGrp = `group -em -n ("timeStamp_0_" + $frameCount)`;
+
+	deleteUI -window myWindow_step2;
+
+	string $outputFileName = `substitute RawAnim $rtgFileList[$rtgFileCount] "CharAnim"`;
+	file -rename $outputFileName;
+	file -f -save  -options "v=0;";
+
+	// step 3
+	// print "\n\n\n-------------------------> STEP3\n\n\n";
+	rtg2Char_step3;
+	
+}
+
+
+global proc onCancelPressed_step2() {
+    deleteUI -window myWindow_step2;
+}
+
+global proc confirmBox_step2(){
+	if (`window -exists myWindow_step2`) {
+		deleteUI myWindow_step2;  
+	}
+	window -title "Step 2: Confirmation Window" -widthHeight 300 100 myWindow_step2;
+	formLayout myForm;
+	text -label ">Bake to Control Rig\n>Hit OK to save file\n> Run Step 3" -align "center" myTextLabel;
+
+	button -label "OK" -w 200 -command "onOKPressed_step2" myOKButton_2;
+	button -label "Cancel" -w 50 -command "onCancelPressed_step2" myCancelButton_2;
+	formLayout -edit
+		-attachForm myOKButton_2 "left" 10
+		-attachForm myOKButton_2 "bottom" 10
+		-attachNone myOKButton_2 "right"
+		-attachNone myOKButton_2 "top"
+		
+		-attachForm myCancelButton_2 "right" 10
+		-attachForm myCancelButton_2 "bottom" 10
+		-attachNone myCancelButton_2 "left"
+		-attachNone myCancelButton_2 "top"
+	myForm;
+
+	showWindow myWindow_step2;
+}
+
+
+global proc addItemToList(string $newItem) {
+	global string $rtgFileList[];
+	if (!`stringArrayContains $newItem $rtgFileList`) {
+		$rtgFileList[size($rtgFileList)] = $newItem;
+		// print("Added: " + $newItem + "\n");
+	} else {
+		// print($newItem + " already exists in the list.\n");
+	}
+}
+
+
+global proc copPos(string $name, int $srcFrame, int $desFrame, int $tran, int $rot){
+	
+	currentTime $srcFrame;
+	float $position[] = `xform -q -ws -t $name`;
+	float $rotation[] = `xform -q -ws -ro $name`;
+	// string $null = `group -em -name "dummy"`; 
+	// setAttr($null + ".t") $position[0] $position[1] $position[2];
+	// setAttr($null + ".r") $rotation[0] $rotation[1] $rotation[2];
+	
+	currentTime $desFrame;
+	select -cl; select $name;
+
+	if($tran == 1){
+		setAttr($name + ".t") $position[0] $position[1] $position[2];
+		setKeyframe;
+	}
+	if ($rot == 1){
+		setAttr($name + ".r") $rotation[0] $rotation[1] $rotation[2];
+		setKeyframe;
+	}
+
+	// print "\n\nDONE\n\n";
+
+}
+
+global proc creDummyChar(){
+	string $allChild[] = `listRelatives -pa -ad "Root"`;
+	select -cl; select $allChild;
+	string $char = `character -name "dummyChar" -excludeVisibility -excludeScale`;
+	clip -name ("oriAnim") -sc 1 -allAbsolute -animCurveRange $char;	
+}
+
+global proc matchHeight( string $desChar, string $srcChar,  string $posFrame, string $timeRange){
+	currentTime $posFrame;
+
+	string $tgtFoot = $desChar + "Left_Cube33" ;
+	string $tgtHip = $desChar + "Character1_Hips" ;
+
+	string $footNull = `group -em -n "dummyFoot"`;
+	string $hipNull = `group -em -n "dummyHip"`;
+	parent $hipNull $footNull;	
+
+	pointConstraint -n "toDel" $tgtFoot $footNull; 	delete "toDel";
+	parentConstraint -n "toDel" $tgtHip $hipNull;
+
+	bakeResults -simulation true -t ("0:" +  $timeRange) -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $hipNull;
+	delete "toDel";
+
+	parentConstraint -n "toDel"  $hipNull $tgtHip;
+
+	float $pos = 0;
+	if ($srcChar == ""){
+		$pos = -13.145458;
+	}else{
+		float $srcPos[] = `xform -q -ws -t ($srcChar + ":Left_Cube33")`;
+		$pos = $srcPos[1];
+	}
+	setAttr ($footNull + ".ty") $pos;
+
+	bakeResults -simulation true -t ("0:" +  $timeRange) -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $tgtHip;
+	delete "toDel";
+	
+	delete $footNull;
+	
+	// print "\nDONE\n";
+
+}
+
+global proc showBone(){
+	string $all[] = `listRelatives -ad -pa "Bip01"`;
+	for ($x in $all){
+		catchQuiet (`setAttr ($x + ".drawStyle") 0`);
+	}
+}
+
+global proc setTimeLine(){
+		float $frCount[] = `keyframe -query -tc "Character1_Hips.rx"`;
+		playbackOptions -ast 0;
+		playbackOptions -aet $frCount[`size $frCount` -1];
+		playbackOptions -min 0 -max $frCount[`size $frCount` -1];
+	
+}
+
+global proc changeBlend(){
+	currentTime 0;
+	setAttr "animBlendInOut1.weight" 1;
+	currentTime 1;
+	setAttr "animBlendInOut1.weight" 0;
+
+}
+
+
+global proc makeLoop(string $srcName ){
+
+	string $allChild[] = `ls -sl`;
+	for ($x in $allChild){
+		catchQuiet (`parentConstraint -n "toDel"  ($srcName + $x ) $x`);
+	}
+	select $allChild;
+	for($y = 52; $y <= 78; $y ++){
+		currentTime $y;
+		setKeyframe;
+	}
+
+	delete (`ls "toDel"`);
+}
+
+
+global proc runRTG(){
+	global int $frameCount;
+	global int $rtgFileCount;
+	global string $rtgFileList[];
+
+	$rtgFileCount = 0;
+	$frameCount = 0;
+	$rtgFileList = {};
+
+	string $characterName = `textField -q -text myCharacterNameField`;
+	string $listFBX[] = `textScrollList -q -allItems rtgFileName_TextScrollList`;
+
+	rtgRawAnim $characterName $listFBX;	
+	flushUndo;
+}
+
+global proc runRTG_oriCon(){ // danh cho nhung nhan vat da co HUMAN IK name Character!_
+
+	string $characterName = `textField -q -text myCharacterNameField`;
+	string $listFBX[] = `textScrollList -q -allItems rtgFileName_TextScrollList`;
+
+	rtgRawAnim_oriCon $characterName $listFBX;	
+	flushUndo;
+}
+
+
+global proc mirrorAnim(){
+	setAttr "Root.sx" -1;
+	string  $child[] = `listRelatives -ad -pa -type "joint" "Root"`;
+	string $dummy [] ;
+	for($x in $child){
+		string $null = `group -em -n ("dummy_" + $x)`;
+		parentConstraint -n "toDel" $x $null;
+		$dummy[`size $dummy`] = $null;
+	}
+
+	$frameCount = size(`keyframe -query -tc "pelvis.tx"`);
+	string $timeRange = "0:" + ($frameCount - 1);
+	playbackOptions -aet ($frameCount - 1);
+
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $dummy;
+	delete `ls "toDel*"`;
+
+	for($x in $child){
+		parentConstraint -n "toDel" ("dummy_" + $x) $x;
+	}
+
+	setAttr "Root.sx" 1;
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $child;
+	delete `ls "toDel*"`;
+
+	delete $dummy;
+
+}
+
+
+global proc neureal_ikLegs(){
+	string $select [] = `ls -sl`;
+	string $dupIt[] = `duplicate -po -rc $select`;
+	string $kneeName = ("loc_" + $dupIt[1]) ;
+	for ($x in $dupIt){
+		string $loc[] = `spaceLocator -n ("loc_" + $x)`;
+		string $locChild[] = `spaceLocator -n ("locChild_" + $x)`;
+		parent $locChild[0] $loc[0];
+		parentConstraint -n "toDel" $x $loc[0];
+		delete "toDel";
+	}
+
+	aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 0 -1 -upVector 0 1 0 -worldUpType "vector" -worldUpVector 0 1 0 $dupIt[2] ("loc_" + $dupIt[3]) ;
+	delete "toDel";
+
+	if ($kneeName == ""){
+		print "\n\nKNEE PAIN\n\n";
+	}else{
+		hn_pythonFindPoleVec  $select [0] $select [1] $select [2] $kneeName;
+
+		select $dupIt;
+		makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+		select -cl; select  $dupIt[0] $dupIt[2];
+		string $footIk[] = `ikHandle -n ("ikRTG_"+ $dupIt[0]) -sol ikRPsolver`;
+		poleVectorConstraint ("locChild_" + $dupIt[1]) $footIk[0];
+
+		parent $footIk[0] ("locChild_" + $dupIt[3]);
+		parent $dupIt[0] ("locChild_" + $dupIt[0]);
+
+		delete  $dupIt[3] ("loc_" + $dupIt[2]);
+
+		parentConstraint -n "toDel" -mo $select[1] $kneeName;
+		parentConstraint -mo "Character1_Hips"  ("loc_" + $dupIt[0]);
+		pointConstraint -n "toDel" -mo $select[3] ("loc_" + $dupIt[3]);
+		aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 0 -1 -upVector 0 1 0 -worldUpType "vector" -worldUpVector 0 1 0 $select[2] ("loc_" + $dupIt[3]) ;
+
+		string $upVec[] = `duplicate -po -name ("jnt_upVec" + $select[2]) $select[2]`;
+		parent $upVec[0] $select[2];
+		setAttr ($upVec[0] + ".tx") 30;
+		parent -w $upVec ; parentConstraint -mo -n "toDel" $select[2] $upVec[0] ;
+
+		aimConstraint -offset 0 0 0 -weight 1 -aimVector 0 0 -1 -upVector 1 0 0 -worldUpType "object" -worldUpObject $upVec[0] ("locChild_" + $dupIt[3]) $dupIt[2];
+
+		float $frCount[] = `keyframe -query -tc ( $select[0] + ".rx")`;
+		string $timeRange = "0:" + $frCount[`size $frCount` -1];
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true {("loc_" + $dupIt[3]) , ("loc_" + $dupIt[1]), $upVec[0] };
+
+		delete `ls "*toDel*"`;
+
+		orientConstraint  -mo $dupIt[0] $select[0];
+		orientConstraint  -mo $dupIt[1] $select[1];
+		orientConstraint  -mo $dupIt[2] $select[2];
+		
+	}
+
+}
+
+
+global proc neureal_deleteRtgIk(int $bake){
+	if($bake == 1){
+		string $ske[] = `listRelatives -ad -pa -type "joint" "Root*"`;
+
+		float $frameCount[] = `keyframe -query -tc ( "Character1_Hips.rx")`;
+		string $timeRange = "0:" + $frameCount[`size $frameCount` -1];
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1  -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $ske;
+		print "\nDONE BAKE\n";
+	}
+
+	delete `ls "toDel*" "loc_*" "jnt_*" "grp_*" `;
+	
+}
+
+global proc VARcam(){
+	string $sel[] = `ls -sl`;
+	if (`objExists "VARcam"`== 1){
+		delete "VARcam";
+	}
+	string $varGrp = `group -em -n "VARcam"`;
+	string $cam[] = `camera -n "leCam"`;
+	parent $cam[0] $varGrp;
+	parentConstraint -mo $sel[0] $varGrp;
+
+}
+
+global proc neureal_fkChain(){
+	string $selectJnt[] = `ls -sl -type "joint"`;
+	string $rootJnt;
+	string $endJnt;
+	string $timeRange;
+	float $frameCount[] = `keyframe -query -tc ( $selectJnt[0] + ".rx")`;
+	if(`size $frameCount` > 1){
+		$timeRange = "0:" + $frameCount[`size $frameCount` -1];
+	}else{
+		$timeRange = "0:1";
+	}
+	
+	if (`size $selectJnt` == 3){
+
+		for ($x = 0; $x < `size $selectJnt`; $x ++){
+			string $duppe[] = `duplicate -n ("jnt_dup_"+ $selectJnt[$x]) -po $selectJnt[$x]`;
+			select $duppe[0];
+			makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+			if($x != 0){
+				parent $duppe[0] ("jnt_dup_"+ $selectJnt[$x-1]);
+				if ($x == (`size $selectJnt` -1) ){
+					$endJnt = $duppe[0];
+				}
+			}else{
+				$rootJnt = $duppe[0];
+				parent -w $duppe[0];
+			}
+		}
+
+		string $listDupJnt[] = `listRelatives -ad $rootJnt`;
+		$listDupJnt[`size $listDupJnt`] = $rootJnt;
+		catchQuiet (`parent -w $listDupJnt`);
+		
+		for($y = 0; $y < `size $listDupJnt`; $y += 3){
+			
+			aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 1 0 -upVector 1 0 0 -worldUpType "object" -worldUpObject $listDupJnt[$y] $listDupJnt[$y + 1] $listDupJnt[$y + 2];
+			delete "toDel";
+			select -cl; select $listDupJnt[$y + 2];
+			makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+			parent $listDupJnt[$y + 1] $listDupJnt[$y + 2];
+			select -cl; select $listDupJnt[$y + 1];
+			makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+			setAttr ( $listDupJnt[$y + 1] + ".jointOrientX") 0;
+			setAttr ( $listDupJnt[$y + 1] + ".jointOrientY") 0;
+
+			string $null = `group -em -n "grp_aim"`;
+			string $aim = `group -em -n "grp_aimTgt"`;
+			parent $aim $null;
+			parentConstraint -n "toDel" $listDupJnt[$y + 1] $null; 
+			delete "toDel";
+			parent $null $listDupJnt[$y + 1];
+			setAttr ($aim + ".tz") 10;
+			parent -w $null;
+
+			aimConstraint -n "toDel" -offset 0 0 0 -weight 1 -aimVector 0 1 0 -upVector 0 0 1 -worldUpType "object" -worldUpObject $aim $listDupJnt[$y] $listDupJnt[$y + 1];
+			delete "toDel";
+			select -cl; select $listDupJnt[$y + 1];
+			makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+
+			parent $listDupJnt[$y] $listDupJnt[$y + 1];
+			select -cl; select $listDupJnt[$y ];
+			makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -pn 1;
+			setAttr ( $listDupJnt[$y ] + ".jointOrientX") 0;
+			setAttr ( $listDupJnt[$y ] + ".jointOrientY") 0;
+
+			delete $null;
+
+		}
+
+		hn_creFkChainCtl $rootJnt "parent";
+
+		for ($i = 0; $i < `size $selectJnt`; $i ++){
+			parentConstraint -n "toDel" -mo $selectJnt[$i] ("ctl_dup_"+ $selectJnt[$i]);
+		}
+
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true {("ctl_dup_"+ $selectJnt[0]), ("ctl_dup_"+ $selectJnt[1]), ("ctl_dup_"+ $selectJnt[2])};
+		delete `ls "toDel"`;
+
+		for ($z = 0; $z < `size $selectJnt`; $z ++){
+			parentConstraint -mo ("ctl_dup_"+ $selectJnt[$z])  $selectJnt[$z];
+		}
+
+		delete $rootJnt;
+
+	}else{
+
+		for($j in $selectJnt){
+			string $ctlNames[] = `hn_creCtrl $j 0 "parent" 0 "" "" "fk"`;
+			parentConstraint -n "toDel" -mo $j $ctlNames[0];
+		}
+
+		string $offsetGrpNames[] = `ls -type "transform" "ctl_*"`;
+		bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $offsetGrpNames;
+		delete `ls "toDel*"`;
+
+		for ($k = 0; $k < `size $selectJnt`; $k ++){
+			parentConstraint -mo ("ctl_"+ $selectJnt[$k])  $selectJnt[$k];
+		}
+
+	}
+	print "\nFINISH!\n";
+
+}
+
+global proc copAnim_oriCon(string $charNamespace){
+	currentTime -20;
+	string $child[] = `listRelatives -ad -pa -type "joint" "Root"`;
+	for ($x in $child){
+		if ($x == "Character1_Hips"){
+			catchQuiet (`parentConstraint -n "toDel" ($charNamespace + "_" + $x) $x`);
+		}else{
+			catchQuiet (`orientConstraint -mo -n "toDel" ($charNamespace + "_" + $x) $x`);
+		}
+	}
+	$frameCount = size(`keyframe -query -tc ( $charNamespace + "_Character1_Hips.tx")`);
+	string $timeRange = "0:" + ($frameCount - 3);
+
+	bakeResults -simulation true -t $timeRange -sampleBy 1 -oversamplingRate 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -removeBakedAttributeFromLayer false -removeBakedAnimFromLayer false -bakeOnOverrideLayer false -minimizeRotation true -controlPoints false -shape true $child;
+	
+	string $del[] = `ls "toDel" ($charNamespace + "*")`;
+	delete $del;
+}
+
+
+global proc rtgRawAnim_oriCon(string $charName, string $listAnim[]){
+	// global int $frameCount;
+	// global int $rtgFileCount;
+	// global string $rtgFileList[];
+	// global string $cName;
+	// $cName = $charName;
+
+	string $baseSke =  "H:/0_WORK/0_UpWork/0_Neureal/"+ $charName +"/assets/PantherRig.ma";
+	
+	for ($x in $listAnim){
+		string $fbxSrc = "H:/0_WORK/0_UpWork/0_Neureal/" + $charName + "/assets/FBX/" + $x + ".fbx";
+		file -f -options "v=0;"  -ignoreVersion  -typ "mayaAscii" -o $baseSke;
+		file -import -type "FBX"  -ignoreVersion -ra true -mergeNamespacesOnClash false -options "fbx" -rpr $x -importFrameRate true -pr -importTimeRange "combine" $fbxSrc;
+
+		copAnim_oriCon $x;
+		setTimeLine;
+		
+		string $outputFileName = ("H:/0_WORK/0_UpWork/0_Neureal/"+$charName+"/assets/RawAnim/"+$x+".ma");
+		addItemToList( $outputFileName);
+		file -rename $outputFileName;
+		file -f -save  -options "v=0;";
+	}
+	
+}
+
+global proc renameSourceFBX(string $namespace){
+
+	if($namespace != ""){
+		$namespace = $namespace + "_";
+	}
+
+	string $srcName[] = {"Character1_Hips", "Character1_Spine", "Character1_Spine1", "Character1_Spine2", "Character1_Neck", "Character1_Head", "Character1_LeftShoulder3", "Character1_LeftArm", "Character1_LeftForeArm", "Character1_LeftHand", "Character1_RightShoulder3", "Character1_RightArm", "Character1_RightForeArm", "Character1_RightHand", "Character1_LeftUpLeg", "Character1_LeftLeg", "Character1_LeftFoot", "Left_Cube33", "Character1_RightUpLeg", "Character1_RightLeg", "Character1_RightFoot", "Right_Cube33"};
+
+	string $tgtName[] = {"pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r"};
+
+	for($x = 0; $x < `size $srcName`; $x ++){
+		rename ($namespace + $srcName[$x]) ($namespace + $tgtName[$x]);
+	}
+	print "\n\nDONE~";
+
+}
+
+
+global proc neureal_export(){
+		
+	string $folderPath = "H:/0_WORK/0_UpWork/0_Neureal/Hawkeye/scenes/sendOut/";
+
+	string $currentFile = `file -q -sn`;
+	string $fileName = `basename $currentFile ""`;
+	string $child[] = `listRelatives -ad -f "Root"`;
+	select -cl; select $child; setKeyframe;
+
+	setTimeLine;
+
+	select -cl; select "Root";
+	file -force -options "v=0;" -typ "FBX export" -pr -es ($folderPath + $fileName +".fbx");
+
+	print $folderPath;
+}
+
+global proc hannahTool_4Neureal(){
+	if (`window -exists hannahTool`) {
+		deleteUI hannahTool;
+	}
+	window -title "Tool for Neureal RTG" -widthHeight 400 400 hannahTool;
+
+	columnLayout;
+
+	rowLayout -numberOfColumns 2;
+	text -label "Character Name:" -width 100;
+	textField -pht "Name please" -width 200 myCharacterNameField;
+	setParent..;
+
+	rowLayout -numberOfColumns 3;
+
+	textField  -width 100 -pht "RTG File Names" rtgFileName_TextField;
+
+	button -label "Add Item" -width 90 -command ("string $item = `textField -q -text rtgFileName_TextField`; if ($item != \"\") { textScrollList -e -append $item rtgFileName_TextScrollList; textField -e -text \"\" rtgFileName_TextField; }");
+
+	button -label "Delete Selected" -width 90 -command ("string $selectedItems[] = `textScrollList -q -selectItem rtgFileName_TextScrollList`; for ($item in $selectedItems) { textScrollList -e -ri $item rtgFileName_TextScrollList; }");
+
+	setParent..;
+
+	text -label "RTG list:";
+	textScrollList -numberOfRows 8 -allowMultiSelection true rtgFileName_TextScrollList;
+
+
+	gridLayout -numberOfColumns 3 -cellWidthHeight 130 50;
+
+	button -label "Start RTG Process" -width 300 -command "runRTG";
+	button -label "Show Bones" -width 130 -command "showBone";
+	button -label "Set Timeline" -width 130 -command "setTimeLine";
+	button -label "Create Dummy Char" -width 130 -command "creDummyChar";
+	button -label "Mirror Anim" -width 130 -command "mirrorAnim";
+	button -label "Create IK Leg" -width 130 -command "neureal_ikLegs";
+	button -label "Delete IK + Bake" -width 130 -command "neureal_deleteRtgIk 1";
+	button -label "VAR" -width 130 -command "VARcam";
+	button -label "FK rig" -width 130 -command "neureal_fkChain";
+	button -label "1 Orient RTG " -width 130 -command "runRTG_oriCon";
+	button -label "Rename SrcFBX" -width 130 -command "renameSourceFBX";
+	button -label "exportFBX" -width 130 -command "neureal_export";
+	
+	
+	showWindow hannahTool;
+}
+
+// chay code bang script nay
+// hn_loadHannahScripts "H:/Git/Mel/hn_script";

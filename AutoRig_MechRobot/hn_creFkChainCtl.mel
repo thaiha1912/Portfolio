@@ -1,0 +1,45 @@
+/*
+Script:     hn_creFkChainCtl
+Author:     Thai Ha Trieu (Hannah Trieu)
+Date:       6.8.2022
+
+//requsiteFunctions: 
+	hn_creCtrl
+//inputs
+
+
+//-purpose
+	
+//-how To:
+
+//-what script does:
+	Create a normal Fk chain rig
+//-bugs 
+
+
+//-future improvements
+
+*/
+global proc string hn_creFkChainCtl(string $jntChain, string $constraintType){
+    string $jntChild[] = `listRelatives -ad -type joint $jntChain`;
+	$jntChild[`size $jntChild`] = $jntChain;
+	string $parentGrp = "";
+
+    for ($x in $jntChild){
+        string $name[]  = `hn_creCtrl $x 1 $constraintType 1 "" "" "fk"`;
+		scaleConstraint $name[0] $x;
+		$parentGrp = $name[2];
+    }
+
+	for ($each in $jntChild){
+		string $parentJnt[] = `listRelatives -p -type "joint" $each`;
+		if(`size $parentJnt` != 0){
+			string $pCtlName = `substitute "jnt" $parentJnt[0] "ctl"`;
+			string $cGrpName = `substitute "jnt" $each "grp"`;
+			parent $cGrpName $pCtlName;
+
+		}
+	}
+
+	return $parentGrp;
+}
